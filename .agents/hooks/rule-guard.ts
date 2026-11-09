@@ -99,11 +99,7 @@ if (import.meta.main) {
       return [];
     }
   });
-  if (!globs.length) {
-    // Fail closed on file edits; shell stays open so the agent can restore the file.
-    if (!/Bash|exec_command|shell/i.test(tool))
-      deny("Can't read the protected list in .claude/settings.json. Restore it with git first.");
-    process.exit(0);
-  }
+  // Neither list readable: keep guarding the core files, everywhere, so recovery is never a gap.
+  if (!globs.length) globs.push(...[`${root}/**/AGENTS.md`, `${root}/**/CLAUDE.md`]);
   if (protectedPaths(tool, input.tool_input, cwd, globs, homedir()).length) deny(REASON);
 }

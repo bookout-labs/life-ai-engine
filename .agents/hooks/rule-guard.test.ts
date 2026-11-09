@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -100,17 +100,17 @@ await test("hook emits the platform denial protocol with repair instructions, us
   assert.doesNotMatch(readFileSync(".agents/hooks/rule-guard.ts", "utf8"), /from "(?!node:|\.\/)/);
 });
 
-await test("fails closed on file edits when the protected list can't be read, but leaves the shell open to restore it", () => {
-  const dir = mkdtempSync(join(tmpdir(), "rule-guard-"));
-  const run = (tool: string, toolInput: unknown) =>
+await test("with no readable list it still guards AGENTS.md and CLAUDE.md, in edits and shell, and nothing else", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "rule-guard-")));
+  const denied = (tool: string, toolInput: unknown) =>
     spawnSync(process.execPath, [".agents/hooks/rule-guard.ts"], {
       input: JSON.stringify({ cwd: dir, tool_name: tool, tool_input: toolInput }),
       encoding: "utf8",
-    });
-  const edit = run("Write", { file_path: "notes.md" });
-  assert.equal(edit.status, 0, edit.stderr);
-  assert.equal(JSON.parse(edit.stdout).hookSpecificOutput.permissionDecision, "deny");
-  assert.equal(run("exec_command", { cmd: "git checkout .claude/settings.json" }).stdout, "");
+    }).stdout.includes('"deny"');
+  assert.ok(denied("Write", { file_path: "AGENTS.md" }));
+  assert.ok(denied("exec_command", { cmd: "echo x > wiki/CLAUDE.md" }));
+  assert.equal(denied("Write", { file_path: "notes.md" }), false);
+  assert.equal(denied("exec_command", { cmd: "git checkout .claude/settings.json" }), false);
 });
 
 await test("an entry removed from this checkout's list still applies from main's", () => {
