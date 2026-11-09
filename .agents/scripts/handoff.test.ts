@@ -5,6 +5,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
+import { writeHandoff } from "./handoff.ts";
 
 test("bootstrap capture is lossless at and above the byte boundary", (t) => {
   const home = mkdtempSync(join(tmpdir(), "handoff-"));
@@ -95,4 +96,50 @@ test("capture and storage errors return failure without leaking input", (t) => {
   });
   assert.equal(invalid.status, 1);
   assert.doesNotMatch(invalid.stdout + invalid.stderr, /synthetic-private/);
+});
+
+test("handoff creation rejects reused slugs and concurrent first writes atomically", {
+  skip: !process.env.HANDOFF_TEST_DATABASE_URL,
+}, async () => {
+  const { default: pg } = await import("pg");
+  const connectionString = process.env.HANDOFF_TEST_DATABASE_URL;
+  const source = new pg.Pool({ connectionString });
+  const schema = `handoff_test_${process.pid}`;
+  const db = new pg.Pool({ connectionString, options: `-c search_path=${schema},public` });
+  const packet = {
+    header: {
+      status: "synthetic",
+      retiringThreadId: "synthetic-thread",
+      blockers: [],
+      nextAction: "Continue existing work",
+      detailPaths: ["private-state"],
+      jobReportPaths: [],
+    },
+    standingOrders: "Preserve existing work",
+    programStore: "private-store",
+    state: "original packet",
+    jobs: [],
+  };
+  try {
+    await source.query(`create schema ${schema}`);
+    const sql = readFileSync(new URL("../../db/migrations/20261109120000_pages_files.sql", import.meta.url), "utf8");
+    await db.query(sql.split("-- migrate:down")[0] ?? "");
+    const first = await writeHandoff(db, "handoff/first", packet);
+    await assert.rejects(writeHandoff(db, "handoff/first", { ...packet, state: "replacement" }), /Page changed/);
+    const original = await db.query("select body from pages where slug=$1", ["handoff/first"]);
+    assert.ok(original.rows[0].body.includes("original packet"));
+    assert.ok(!original.rows[0].body.includes("replacement"));
+    assert.equal(Buffer.byteLength(original.rows[0].body), first.bytes);
+    const race = await Promise.allSettled([
+      writeHandoff(db, "handoff/race", packet),
+      writeHandoff(db, "handoff/race", { ...packet, state: "other candidate" }),
+    ]);
+    assert.equal(race.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal((await db.query("select count(*)::int as n from pages")).rows[0].n, 2);
+    assert.equal((await db.query("select count(*)::int as n from page_revisions")).rows[0].n, 2);
+  } finally {
+    await db.end();
+    await source.query(`drop schema if exists ${schema} cascade`);
+    await source.end();
+  }
 });
