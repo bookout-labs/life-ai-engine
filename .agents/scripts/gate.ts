@@ -51,16 +51,18 @@ try {
     body: string;
     comments: { body: string; author: { login: string }; authorAssociation: string }[];
   } = JSON.parse(gh("issue", "view", issue, "-R", repo, "--json", "title,body,comments"));
-  // A public repo: only the gate's own comments and maintainers' Regroup comments move the count.
+  // A public repo: only the gate's own comments and Regroups from the save App or a maintainer move the count.
+  // The org's membership is private, so the gate's token sees maintainers as outsiders; agents regroup as the App.
   const counted = card.comments.filter((c) =>
     c.body.startsWith("Regroup:")
-      ? ["OWNER", "MEMBER", "COLLABORATOR"].includes(c.authorAssociation)
+      ? c.author.login.replace(/^app\//, "") === "bookout-life-ai-agents" ||
+        ["OWNER", "MEMBER", "COLLABORATOR"].includes(c.authorAssociation)
       : c.author.login === "github-actions",
   );
   const rounds = roundsSinceRegroup(counted.map((c) => c.body));
   if (rounds >= MAX_ROUNDS) {
     throw new Error(
-      `#${issue} has ${rounds} blocked review rounds. Stop patching: comment "Regroup: <what failed, the new approach>" on the issue, build that, then save again.`,
+      `#${issue} has ${rounds} blocked review rounds. Stop patching: regroup with save.ts --issue <n> --regroup "<what failed, the new approach>", build that, then save again.`,
     );
   }
 
