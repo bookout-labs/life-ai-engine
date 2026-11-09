@@ -63,6 +63,7 @@ function codexFixture(
     formal = false,
     includeState = true,
     requestLogin = "",
+    inlineBodies = ["[P0] Synthetic bug"],
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "codex-review-test-"));
@@ -91,7 +92,7 @@ function codexFixture(
   if (requestLogin)
     comments.push({ user: { login: requestLogin }, body: "@codex review\n\n<!-- codex-review-request:head -->" });
   const reviews = formal ? [{ user: { login }, id: 12, commit_id: sha, body: "Reviewed" }] : [];
-  const inline = [{ path: "a.ts", line: null, body: "[P0] Synthetic bug" }];
+  const inline = inlineBodies.map((body) => ({ path: "a.ts", line: null, body }));
   writeFileSync(
     join(dir, "gh"),
     `#!${process.execPath}
@@ -124,6 +125,103 @@ test("unresolved state blocks with inline findings", async (t) => {
   const review = await codexReview("owner/repo", 1, "head", 0);
   assert.equal(blocking(review)[0]?.priority, 0);
   assert.equal(review.findings[0]?.line, 0);
+});
+test("P2 Codex badge findings do not block", async (t) => {
+  codexFixture(t, {
+    unresolved: true,
+    formal: true,
+    inlineBodies: [
+      "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Synthetic finding**",
+    ],
+  });
+  const review = await codexReview("owner/repo", 1, "head", 0);
+  assert.deepEqual(blocking(review), []);
+  assert.equal(review.findings[0]?.priority, 2);
+});
+for (const { priority, color, blocks } of [
+  { priority: 0, color: "red", blocks: true },
+  { priority: 1, color: "orange", blocks: true },
+  { priority: 3, color: "blue", blocks: false },
+])
+  test(`P${priority} Codex badge findings ${blocks ? "block" : "do not block"}`, async (t) => {
+    codexFixture(t, {
+      formal: true,
+      includeState: false,
+      inlineBodies: [
+        `**<sub><sub>![P${priority} Badge](https://img.shields.io/badge/P${priority}-${color}?style=flat)</sub></sub>  Synthetic finding**`,
+      ],
+    });
+    const review = await codexReview("owner/repo", 1, "head", 0);
+    assert.equal(review.findings[0]?.priority, priority);
+    assert.equal(blocking(review).length, blocks ? 1 : 0);
+  });
+
+test("Codex badge priority takes precedence over text tags", async (t) => {
+  codexFixture(t, {
+    formal: true,
+    unresolved: true,
+    inlineBodies: ["![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat) Synthetic finding\nMentions [P2]."],
+  });
+  const review = await codexReview("owner/repo", 1, "head", 0);
+  assert.equal(review.findings[0]?.priority, 1);
+  assert.equal(blocking(review).length, 1);
+});
+
+test("Codex text priority tags remain a fallback", async (t) => {
+  codexFixture(t, {
+    formal: true,
+    unresolved: true,
+    inlineBodies: ["[P1] Synthetic finding", "[P2] Synthetic finding", "[P3] Synthetic finding"],
+  });
+  const review = await codexReview("owner/repo", 1, "head", 0);
+  assert.deepEqual(
+    review.findings.map((finding) => finding.priority),
+    [1, 2, 3],
+  );
+  assert.deepEqual(
+    blocking(review).map((finding) => finding.priority),
+    [1],
+  );
+});
+
+test("unmarked Codex findings default to P1 and block", async (t) => {
+  codexFixture(t, { formal: true, unresolved: true, inlineBodies: ["Synthetic finding without a priority"] });
+  const review = await codexReview("owner/repo", 1, "head", 0);
+  assert.equal(review.findings[0]?.priority, 1);
+  assert.equal(blocking(review).length, 1);
+});
+
+test("priority markers quoted below the first line cannot downgrade an unmarked finding", async (t) => {
+  codexFixture(t, {
+    formal: true,
+    unresolved: true,
+    inlineBodies: ['Synthetic finding\n```suggestion\nconst tag = "[P3]"; // /badge/P3-blue\n```'],
+  });
+  const review = await codexReview("owner/repo", 1, "head", 0);
+  assert.equal(review.findings[0]?.priority, 1);
+  assert.equal(blocking(review).length, 1);
+});
+
+test("mixed Codex badge findings retain each priority and block only P0 and P1", async (t) => {
+  codexFixture(t, {
+    formal: true,
+    unresolved: true,
+    inlineBodies: [
+      "![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat) Synthetic finding",
+      "![P0 Badge](https://img.shields.io/badge/P0-red?style=flat) Synthetic finding",
+      "![P3 Badge](https://img.shields.io/badge/P3-blue?style=flat) Synthetic finding",
+      "![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat) Synthetic finding",
+    ],
+  });
+  const review = await codexReview("owner/repo", 1, "head", 0);
+  assert.deepEqual(
+    review.findings.map((finding) => finding.priority),
+    [2, 0, 3, 1],
+  );
+  assert.deepEqual(
+    blocking(review).map((finding) => finding.priority),
+    [0, 1],
+  );
 });
 test("unresolved state cannot pass before inline comments arrive", async (t) => {
   codexFixture(t, { unresolved: true });
