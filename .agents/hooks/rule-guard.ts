@@ -46,10 +46,11 @@ const toRegex = (glob: string) =>
       .join("")}$`,
   );
 
-// A target matches when it is a protected path or a folder above one, wildcards included:
+// A target matches when it is a protected path or, for a remove or move, a folder above one, wildcards included:
 // rm -rf .claude/rules, ~/.claude, or ~/.claude/projects/p (which holds p/memory). Above a ** the hook can't tell.
-export function matches(path: string, glob: string): boolean {
+export function matches(path: string, glob: string, removes = false): boolean {
   if (toRegex(glob).test(path)) return true;
+  if (!removes) return false;
   const parts = path.split("/");
   const globParts = glob.split("/");
   const above = globParts.slice(0, parts.length);
@@ -110,9 +111,10 @@ export function protectedPaths(tool: string, toolInput: unknown, cwd: string, gl
   return targets
     .flatMap(({ path, removes }) => {
       const full = resolve(cwd, path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/)/, home));
-      return removes ? [full, ...tracked(full)] : [full];
+      return (removes ? [full, ...tracked(full)] : [full]).map((target) => ({ target, removes }));
     })
-    .filter((path) => globs.some((glob) => matches(path, glob)));
+    .filter(({ target, removes }) => globs.some((glob) => matches(target, glob, removes)))
+    .map(({ target }) => target);
 }
 
 if (import.meta.main) {

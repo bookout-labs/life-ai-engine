@@ -72,7 +72,13 @@ await test("deleting a protected folder or a folder that holds one is blocked", 
     `rm -rf ${home}/.claude/projects`,
   ])
     assert.ok(blocked({ cmd: command }, root, "exec_command"), command);
-  for (const command of ["rm -rf build", "rm -rf .claude/skills/old", `rm -rf ${home}/.claude/projects/p/cache`])
+  for (const command of [
+    "cp notes.md .claude",
+    `touch ${home}/.claude`,
+    "rm -rf build",
+    "rm -rf .claude/skills/old",
+    `rm -rf ${home}/.claude/projects/p/cache`,
+  ])
     assert.equal(blocked({ cmd: command }, root, "exec_command"), false, command);
 });
 
