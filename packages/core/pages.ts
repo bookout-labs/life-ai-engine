@@ -98,14 +98,16 @@ export async function pageWrite(db: Db, input: z.input<typeof pageWriteSchema>):
         p.tags ?? null,
       ],
     );
-    await client.query(`insert into page_revisions(page_id,body,kind,agent,session,work) values($1,$2,$3,$4,$5,$6)`, [
-      rows[0]?.id,
-      p.body,
-      p.kind,
-      p.agent,
-      p.session,
-      p.work,
-    ]);
+    // A save that leaves the body as it was adds no revision.
+    if (current?.body !== p.body)
+      await client.query(`insert into page_revisions(page_id,body,kind,agent,session,work) values($1,$2,$3,$4,$5,$6)`, [
+        rows[0]?.id,
+        p.body,
+        p.kind,
+        p.agent,
+        p.session,
+        p.work,
+      ]);
     const result = await pageRead(client, p.slug);
     if (!result) throw new Error("Page write failed");
     await client.query("commit");

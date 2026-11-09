@@ -104,6 +104,9 @@ test("Postgres and CLI round trip, revisions, conflict, search, soft delete and 
     const revisions = (await pageLog(db)).length;
     await assert.rejects(pageWrite(db, { ...input, body: "Rejected", expected_revision: first.revision }), /changed/);
     assert.equal((await pageLog(db)).length, revisions);
+    await pageWrite(db, { ...input, body: "Remote body\n", title: "Retitled" });
+    assert.equal((await pageLog(db)).length, revisions);
+    assert.equal((await pageRead(db, input.slug))?.title, "Retitled");
     await pageDelete(db, input.slug);
     assert.equal(await pageRead(db, input.slug), undefined);
     assert.equal((await pageSearch(db, "nectarine")).length, 0);
