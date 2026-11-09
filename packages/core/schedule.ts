@@ -21,7 +21,7 @@ export async function schedule(db: pg.ClientBase | pg.Pool, from: string = today
        from events e
        join activities a on a.id = e.activity_id
        join members m on m.id = a.member_id
-      where e.kind <> 'cancelled'
+      where not e.cancelled
         and e.starts_at >= ($1::date)::timestamp at time zone $3
         and e.starts_at < ($1::date + $2::int)::timestamp at time zone $3
       order by e.starts_at, who`,
