@@ -13,7 +13,7 @@ Use short, plain answers, visual explanations, existing tools and lean TypeScrip
 ## Routed rules
 
 - **rules**: Rules require a trigger and a hook or check route; AGENTS.md is generated. Trigger: npm run check. Route: check `.agents/scripts/rules.ts`.
-- **instruction-writes**: Direct writes to generated instructions and agent memory are blocked. Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write. Trigger: instruction or memory write. Route: hook `.agents/hooks/rule-guard.ts` (PreToolUse).
+- **instruction-writes**: Direct writes to generated instructions and agent memory are blocked by the permissions.deny list in .claude/settings.json, enforced natively by Claude and Grok and by this hook for every agent's file edits. Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write. Trigger: instruction or memory write. Route: hook `.agents/hooks/rule-guard.ts` (PreToolUse).
 - **save**: Raw git commit, git push and gh pr merge are blocked; save.ts owns saving. Trigger: shell save. Route: hook `.agents/hooks/guard.ts` (PreToolUse).
 - **unsaved**: The next prompt receives a reminder of unchanged files left unsaved. Trigger: user prompt. Route: hook `.agents/hooks/turn-start.ts` (UserPromptSubmit).
 - **snapshot**: Track changes left unsaved at the end of a reply. Trigger: reply ends. Route: hook `.agents/hooks/stop-check.ts` (Stop).

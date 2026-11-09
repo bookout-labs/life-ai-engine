@@ -22,7 +22,7 @@
         ]
       },
       {
-        "matcher": "apply_patch|Write|Edit|MultiEdit|Bash|exec_command|Delete",
+        "matcher": "apply_patch|Write|Edit|MultiEdit|Delete",
         "hooks": [
           {
             "type": "command",

@@ -29,13 +29,13 @@ export const RULES: Rule[] = [
   },
   {
     id: "instruction-writes",
-    rule: "Direct writes to generated instructions and agent memory are blocked. Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write.",
+    rule: "Direct writes to generated instructions and agent memory are blocked by the permissions.deny list in .claude/settings.json, enforced natively by Claude and Grok and by this hook for every agent's file edits. Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write.",
     trigger: "instruction or memory write",
     route: {
       kind: "hook",
       file: ".agents/hooks/rule-guard.ts",
       event: "PreToolUse",
-      tools: { claude: ["Write", "Edit", "MultiEdit", "Bash"], codex: ["apply_patch", "Bash"] },
+      tools: { claude: ["Write", "Edit", "MultiEdit"], codex: ["apply_patch"] },
     },
   },
   {

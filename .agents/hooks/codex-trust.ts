@@ -3,14 +3,15 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { repoRoot } from "./changes.ts";
+import { mainRoot, repoRoot } from "./changes.ts";
 import { readHookInput } from "./edits.ts";
 
 type CodexHook = { key: string; enabled: boolean; trustStatus: string; sourcePath: string; currentHash: string };
 
 // Only this repo's hooks.json; a disabled hook was turned off on purpose, so it stays off.
-export function toApprove(hooks: CodexHook[], hooksFile: string): CodexHook[] {
-  return hooks.filter((hook) => hook.sourcePath === hooksFile && hook.enabled && hook.trustStatus !== "trusted");
+// In a worktree Codex reads the main checkout's hooks.json, so both copies count as this repo's.
+export function toApprove(hooks: CodexHook[], hooksFiles: string[]): CodexHook[] {
+  return hooks.filter((hook) => hooksFiles.includes(hook.sourcePath) && hook.enabled && hook.trustStatus !== "trusted");
 }
 
 export function unrunnable(hooks: CodexHook[]): string[] {
@@ -62,7 +63,8 @@ if (import.meta.main) {
   if (target?.providerInstanceId === "codex") {
     const repo = repoRoot(input.cwd ?? process.cwd());
     try {
-      const pending = toApprove(await listHooks(repo), join(repo, ".codex", "hooks.json"));
+      const files = [repo, mainRoot(repo)].map((root) => join(root, ".codex", "hooks.json"));
+      const pending = toApprove(await listHooks(repo), files);
       if (pending.length > 0) {
         const state = Object.fromEntries(pending.map((hook) => [hook.key, { trusted_hash: hook.currentHash }]));
         await codex("config/value/write", { keyPath: "hooks.state", mergeStrategy: "upsert", value: state });
