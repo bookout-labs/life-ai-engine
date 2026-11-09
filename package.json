@@ -1,0 +1,35 @@
+{
+  "name": "life-ai",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.4",
+    "@modelcontextprotocol/server": "2.4.0",
+    "@neon/config": "1.13.0",
+    "@neon/env": "2.1.0",
+    "pg": "8.23.1",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.6",
+    "@types/node": "26.6.6",
+    "@types/pg": "8.23.1",
+    "dbmate": "2.37.0",
+    "knip": "6.44.2",
+    "neon": "9.2.0",
+    "typescript": "7.0.2",
+    "wrangler": "4.158.0"
+  },
+  "scripts": {
+    "check": "npm run types && tsc -p . && tsc -p apps/mcp && biome check . && knip && node --test \".agents/**/*.test.ts\" && node .agents/scripts/stale-rules.ts && node .agents/scripts/rules.ts",
+    "fix": "biome check --write .",
+    "migrate": "DATABASE_URL=\"$(neon cs --ssl verify-full)&sslrootcert=system\" dbmate",
+    "deploy": "wrangler deploy -c apps/mcp/wrangler.jsonc",
+    "types": "wrangler types -c apps/mcp/wrangler.jsonc apps/mcp/worker-configuration.d.ts >/dev/null",
+    "smoke": "node apps/mcp/smoke.ts"
+  }
+}

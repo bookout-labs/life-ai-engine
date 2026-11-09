@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  // Resources use the life-ai prefix.
+  "name": "life-ai-mcp",
+  "account_id": "12ccca77eb49142a6be8eb84c0d6a3a0",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-01",
+  // global_fetch_strictly_public: the OAuth library fetches client metadata documents from URLs clients choose.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "e3673e93d2754e09bb53bb0b32f53c6a" }],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "life-ai-files" }],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "4bbb60385ab74685b4c37c67d9315935" }],
+  // GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are Worker secrets.
+  "vars": { "OWNER": "jbookout" },
+  "observability": { "enabled": true }
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "neon.ts",
+    ".agents/hooks/*.ts",
+    ".agents/scripts/*.ts",
+    ".agents/**/*.test.ts",
+    "apps/*/worker.ts",
+    "apps/*/smoke.ts"
+  ],
+  "project": [".agents/**/*.ts", "!.agents/skills/**", "packages/**/*.ts", "apps/**/*.ts"],
+  "ignoreBinaries": ["codex", "vale", "file"]
+}

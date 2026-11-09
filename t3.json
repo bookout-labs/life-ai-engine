@@ -1,0 +1,12 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "defaultThreadEnvMode": "worktree",
+  "scripts": [
+    {
+      "name": "Prepare worktree",
+      "command": "npm ci",
+      "icon": "configure",
+      "runOnWorktreeCreate": true
+    }
+  ]
+}

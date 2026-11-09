@@ -1,0 +1,14 @@
+extends: existence
+message: "'%s' depends on a changing condition. Rewrite it evergreen: name the live check (a fallback chain that steps on this task's own failure), or anchor planned work to an open issue (until #n)."
+level: error
+ignorecase: true
+tokens:
+  - for now
+  - temporar(?:y|ily)
+  - for the time being
+  - until (?:it's |it is )?(?:restored|fixed|resolved|back)
+  - until further notice
+  - right now
+  - currently
+  - usage left
+  - (?:until|while)\b[^.]{0,80}\b(?:balance|quota|credits|exhausted|outage|unavailable|down)
