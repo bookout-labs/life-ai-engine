@@ -86,6 +86,8 @@ function codex(method: string, params: object): Promise<unknown> {
     const send = (message: object) => server.stdin.write(`${JSON.stringify(message)}\n`);
     const timer = setTimeout(() => server.kill(), 7_000);
     server.on("error", reject);
+    // A server that exits before reading makes the write fail with EPIPE; that must deny, not crash open.
+    server.stdin.on("error", reject);
     server.on("exit", () => {
       clearTimeout(timer);
       reject(new Error("codex app-server exited before answering"));

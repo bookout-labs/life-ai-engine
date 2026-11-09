@@ -39,6 +39,6 @@ if (import.meta.main) {
     const text = context(repo, editedPaths(input.tool_input), cwd, command);
     if (text) reply("PreToolUse", text);
   } catch {
-    console.error("Code context could not be loaded. Check the checkout before editing.");
+    reply("PreToolUse", "Code context could not be loaded. Check the checkout before editing.");
   }
 }

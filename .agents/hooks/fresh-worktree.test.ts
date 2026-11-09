@@ -70,7 +70,7 @@ test("fresh checkout hooks enforce guards and register the first prompt without 
   const outside = run("code-rules", { cwd: home, tool_name: "Bash", tool_input: { command: "ls" } });
   check("code-rules/non-git", outside, outside.status === 0 && outside.stdout === "");
   const trust = run("codex-trust", { tool_input: { target: { providerInstanceId: "codex" } } });
-  check("codex-trust", trust, trust.status === 2 || /"permissionDecision":"deny"/.test(trust.stdout));
+  check("codex-trust", trust, trust.status === 0 && /"permissionDecision":"deny"/.test(trust.stdout));
   const guard = run("guard", { tool_input: { command: "git push" } });
   check("guard", guard, /"permissionDecision":"deny"/.test(guard.stdout));
   const lint = run("lint-edit", { tool_input: { file_path: ".agents/hooks/guard.ts" } });
