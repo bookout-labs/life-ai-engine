@@ -18,7 +18,7 @@ Neon holds records and personal prose, R2 holds originals, this repository holds
 
 Use short, plain answers, visual explanations, existing tools and lean TypeScript. Platform features come first. Account tasks are ready plans with live walkthroughs.
 
-.claude/skills/wiki owns knowledge maintenance; sunday owns family check-ins; lab owns building, research and tool choices. docs/skill-map.md is a catalog. Hooks deliver context on events; checks validate routes. .agents/rules.ts is the rule source and AGENTS.md is generated.`;
+.agents/skills is the canonical skill folder. .agents/skills/wiki owns knowledge maintenance; sunday owns family check-ins; lab owns building, research and tool choices. docs/skill-map.md is a catalog. Hooks deliver context on events; checks validate routes. .agents/rules.ts is the rule source and AGENTS.md is generated.`;
 
 export const RULES: Rule[] = [
   {
@@ -95,7 +95,7 @@ export const RULES: Rule[] = [
       tools: { claude: ["Edit", "Write"], codex: ["apply_patch"] },
     },
     inject: "**/*.ts",
-    context: ".claude/skills/lab/SKILL.md",
+    context: ".agents/skills/lab/SKILL.md",
   },
   {
     id: "wiki-context",
@@ -108,7 +108,7 @@ export const RULES: Rule[] = [
       tools: { claude: ["Edit", "Write", "Bash"], codex: ["apply_patch", "Bash", "exec_command"] },
     },
     inject: "~/.life-ai/pages/**/*.md",
-    context: ".claude/skills/wiki/SKILL.md",
+    context: ".agents/skills/wiki/SKILL.md",
   },
   {
     id: "orchestrator-registration",
