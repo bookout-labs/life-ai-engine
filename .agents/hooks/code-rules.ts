@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { matchesGlob, relative, resolve } from "node:path";
-import { z } from "zod";
 import { RULES } from "../rules.ts";
 import { repoRoot } from "./changes.ts";
 import { editedPaths, readHookInput, reply } from "./edits.ts";
+import { optionalString, record } from "./parse.ts";
 
 export function context(repo: string, paths: string[], cwd = repo, command = "", home = homedir()): string {
   return RULES.filter(
@@ -23,12 +23,22 @@ export function context(repo: string, paths: string[], cwd = repo, command = "",
 }
 
 if (import.meta.main) {
-  const input = readHookInput();
-  const cwd = input.cwd ?? process.cwd();
-  const tool = z
-    .object({ command: z.string().optional(), cmd: z.string().optional() })
-    .passthrough()
-    .parse(typeof input.tool_input === "string" ? { command: input.tool_input } : (input.tool_input ?? {}));
-  const text = context(repoRoot(cwd), editedPaths(input.tool_input), cwd, tool?.command ?? tool?.cmd ?? "");
-  if (text) reply("PreToolUse", text);
+  try {
+    const input = readHookInput(true);
+    const cwd = input.cwd ?? process.cwd();
+    const tool = record(
+      typeof input.tool_input === "string" ? { command: input.tool_input } : (input.tool_input ?? {}),
+    );
+    const command = optionalString(tool.command) ?? optionalString(tool.cmd) ?? "";
+    let repo: string;
+    try {
+      repo = repoRoot(cwd);
+    } catch {
+      process.exit(0);
+    }
+    const text = context(repo, editedPaths(input.tool_input), cwd, command);
+    if (text) reply("PreToolUse", text);
+  } catch {
+    console.error("Code context could not be loaded. Check the checkout before editing.");
+  }
 }

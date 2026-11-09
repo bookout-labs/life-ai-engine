@@ -19,12 +19,17 @@ if (files.length > 0) {
       stdio: "pipe",
     });
   } catch (error) {
-    const { stdout = "", stderr = "" } = error as { stdout?: string; stderr?: string };
-    const found = `${stdout}${stderr}`.trim().slice(0, 4000);
+    const {
+      stdout = "",
+      stderr = "",
+      message = "Biome could not run",
+      status,
+    } = error as { stdout?: string; stderr?: string; message?: string; status?: number };
+    const found = (`${stdout}${stderr}`.trim() || message).slice(0, 4000);
     if (found)
       reply(
         "PostToolUse",
-        `Biome found problems in ${files.join(", ")}. Fix them now (npm run fix handles formatting):\n${found}`,
+        `${status === 1 ? "Biome found issues in" : "Biome could not verify"} ${files.join(", ")}. Fix them now (npm run fix handles formatting):\n${found}`,
       );
   }
 }

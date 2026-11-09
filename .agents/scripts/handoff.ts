@@ -2,43 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { z } from "zod";
 import { pageRead, pageWrite } from "../../packages/core/pages.ts";
+import { renderHandoff } from "./handoff-input.ts";
 import { runPages } from "./pages.ts";
-
-const text = z.string().min(1);
-const headerSchema = z
-  .object({
-    status: text,
-    retiringThreadId: text,
-    blockers: z.array(text),
-    nextAction: text,
-    detailPaths: z.array(text),
-    jobReportPaths: z.array(text),
-  })
-  .strict();
-const packetSchema = z
-  .object({
-    header: headerSchema,
-    standingOrders: text,
-    programStore: text,
-    state: text,
-    jobs: z.array(z.object({ taskId: text, reportingTo: text, reportPath: text, status: text }).strict()),
-  })
-  .strict();
-
-function render(input: unknown) {
-  const packet = packetSchema.parse(input);
-  const header = `HANDOFF-HEADER v1\n${JSON.stringify(packet.header)}\n`;
-  if (Buffer.byteLength(header) > 2000) throw new Error("Handoff header exceeds 2000 bytes");
-  if (new Set(packet.jobs.map((job) => job.taskId)).size !== packet.jobs.length)
-    throw new Error("Duplicate task ids in handoff");
-  return { header, body: `${header}\n${JSON.stringify(packet)}` };
-}
 
 export async function writeHandoff(db: Parameters<typeof pageWrite>[0], slug: string, input: unknown) {
   if (!slug.startsWith("handoff/")) throw new Error("Use a unique handoff/ slug");
-  const { body } = render(input);
+  const { body } = renderHandoff(input);
   await pageWrite(db, {
     slug,
     body,
@@ -92,7 +62,7 @@ if (import.meta.main) {
   try {
     const [command, slug] = process.argv.slice(2);
     if (command === "capture") capture();
-    else if (command === "validate") process.stdout.write(render(JSON.parse(readFileSync(0, "utf8"))).header);
+    else if (command === "validate") process.stdout.write(renderHandoff(JSON.parse(readFileSync(0, "utf8"))).header);
     else if (command === "write" || command === "read") {
       if (!slug?.startsWith("handoff/")) throw new Error("Use a unique handoff/ slug");
       const { db } = await import("./db.ts");
@@ -104,7 +74,7 @@ if (import.meta.main) {
           const saved = await runPages(db, ["read", slug]);
           const separator = saved.indexOf("\n\n");
           if (separator < 0) throw new Error("Invalid handoff");
-          const recovered = render(JSON.parse(saved.slice(separator + 2)));
+          const recovered = renderHandoff(JSON.parse(saved.slice(separator + 2)));
           if (saved !== recovered.body) throw new Error("Handoff header differs from body");
           process.stdout.write(process.argv.includes("--full") ? recovered.body : recovered.header);
         }

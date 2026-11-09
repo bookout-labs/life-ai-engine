@@ -4,30 +4,21 @@ import { execFileSync, spawn } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { z } from "zod";
 import { repoRoot } from "./changes.ts";
 import { readHookInput } from "./edits.ts";
+import { array, boolean, isRecord, nonempty, record, string } from "./parse.ts";
 
-const hookSchema = z.object({
-  key: z.string().min(1),
-  enabled: z.boolean(),
-  trustStatus: z.string(),
-  sourcePath: z.string(),
-  currentHash: z.string().min(1),
-});
-type CodexHook = z.infer<typeof hookSchema>;
-const hooksFileSchema = z.object({
-  hooks: z.record(
-    z.string(),
-    z.array(
-      z
-        .object({
-          hooks: z.array(z.object({ type: z.literal("command"), command: z.string().min(1) }).passthrough()),
-        })
-        .passthrough(),
-    ),
-  ),
-});
+function parseHook(value: unknown) {
+  const hook = record(value);
+  return {
+    key: nonempty(hook.key),
+    enabled: boolean(hook.enabled),
+    trustStatus: string(hook.trustStatus),
+    sourcePath: string(hook.sourcePath),
+    currentHash: nonempty(hook.currentHash),
+  };
+}
+type CodexHook = ReturnType<typeof parseHook>;
 
 function projectHooks(repo: string) {
   const inventory = execFileSync("git", ["worktree", "list", "--porcelain", "-z"], {
@@ -60,13 +51,15 @@ function projectHooks(repo: string) {
     canApprove && localMatches
       ? ""
       : `Codex project hook configuration differs. Resolved source ${source}; worktree ${local}. Hooks declared on main but missing from the primary (such as rotation) are inactive. ${remediation}`;
-  const config = hooksFileSchema.parse(JSON.parse(expected.toString("utf8")));
-  const keys = Object.entries(config.hooks).flatMap(([event, groups]) =>
-    groups.flatMap((group, i) =>
-      group.hooks.map(
-        (_, j) =>
-          `${source}:${event.replace(/[A-Z]/g, (letter, index) => `${index ? "_" : ""}${letter.toLowerCase()}`)}:${i}:${j}`,
-      ),
+  const config = record(JSON.parse(expected.toString("utf8")));
+  const keys = Object.entries(record(config.hooks)).flatMap(([event, groups]) =>
+    array(groups).flatMap((group, i) =>
+      array(record(group).hooks).map((hook, j) => {
+        const command = record(hook);
+        if (command.type !== "command") throw new Error("Expected a command hook");
+        nonempty(command.command);
+        return `${source}:${event.replace(/[A-Z]/g, (letter, index) => `${index ? "_" : ""}${letter.toLowerCase()}`)}:${i}:${j}`;
+      }),
     ),
   );
   if (!keys.length) throw new Error(`No project hooks declared in ${source}. ${remediation}`);
@@ -100,9 +93,9 @@ function codex(method: string, params: object): Promise<unknown> {
     createInterface({ input: server.stdout }).on("line", (line) => {
       let message: { id?: number | undefined; error?: unknown; result?: unknown };
       try {
-        message = z
-          .object({ id: z.number().optional(), error: z.unknown().optional(), result: z.unknown().optional() })
-          .parse(JSON.parse(line));
+        const parsed = record(JSON.parse(line));
+        if (parsed.id !== undefined && typeof parsed.id !== "number") throw new Error("Invalid RPC id");
+        message = { id: parsed.id, error: parsed.error, result: parsed.result };
       } catch {
         reject(new Error("Invalid JSON from codex app-server"));
         server.kill();
@@ -124,11 +117,11 @@ function codex(method: string, params: object): Promise<unknown> {
 // User and plugin hooks are not ours to judge, so only this repository's entries are validated.
 async function listHooks(repo: string, source: string): Promise<CodexHook[]> {
   const result = await codex("hooks/list", { cwds: [repo] });
-  const parsed = z.object({ data: z.array(z.object({ hooks: z.array(z.unknown()) })).length(1) }).parse(result);
-  return parsed.data
-    .flatMap((entry) => entry.hooks)
-    .filter((hook) => z.object({ sourcePath: z.literal(source) }).safeParse(hook).success)
-    .map((hook) => hookSchema.parse(hook));
+  const data = array(record(result).data);
+  if (data.length !== 1) throw new Error("Expected one hook inventory");
+  return array(record(data[0]).hooks)
+    .filter((hook) => isRecord(hook) && hook.sourcePath === source)
+    .map(parseHook);
 }
 
 function deny(reason: string): void {
@@ -140,10 +133,10 @@ function deny(reason: string): void {
 }
 
 if (import.meta.main) {
-  const input = readHookInput();
-  const target = (input.tool_input as { target?: { providerInstanceId?: string } } | undefined)?.target;
-  if (target?.providerInstanceId === "codex") {
-    try {
+  try {
+    const input = readHookInput(true);
+    const target = (input.tool_input as { target?: { providerInstanceId?: string } } | undefined)?.target;
+    if (target?.providerInstanceId === "codex") {
       const repo = repoRoot(input.cwd ?? process.cwd());
       const project = projectHooks(repo);
       const loaded = async () => {
@@ -177,8 +170,8 @@ if (import.meta.main) {
             hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: project.warning },
           }),
         );
-    } catch (error) {
-      deny(`Couldn't confirm Codex runs life-ai's hooks (${String(error)}). Tell the user.`);
     }
+  } catch (error) {
+    deny(`Couldn't confirm Codex runs life-ai's hooks (${String(error)}). Tell the user.`);
   }
 }

@@ -154,13 +154,13 @@ test("manual compaction is untouched; automatic preservation repeats and Stop is
   }
 });
 
-test("missing or malformed transcript, event, usage and state fail open", (t) => {
+test("missing or malformed transcript, event, usage and state warn visibly", (t) => {
   const f = fixture(t);
   rmSync(f.transcript);
-  assert.equal(f.run(), undefined);
+  assert.match(f.run().systemMessage, /not confirmed/);
   for (const body of ["{broken", "null", JSON.stringify({ type: "assistant", message: { usage: "bad" } })]) {
     writeFileSync(f.transcript, body);
-    assert.equal(f.run(), undefined);
+    assert.match(f.run().systemMessage, /not confirmed/);
   }
   for (const usage of [
     { input_tokens: "100" },
@@ -168,11 +168,11 @@ test("missing or malformed transcript, event, usage and state fail open", (t) =>
     null,
   ]) {
     f.write(100, marker, [{ type: "assistant", message: { usage } }]);
-    assert.equal(f.run(), undefined);
+    assert.match(f.run().systemMessage, /not confirmed/);
   }
   f.write();
-  assert.equal(f.run({ session_id: null }), undefined);
-  assert.equal(f.run({}, { ...f.env, LIFE_AI_ROTATION_TOKENS: "broken" }), undefined);
+  assert.match(f.run({ session_id: null }).systemMessage, /not confirmed/);
+  assert.match(f.run({}, { ...f.env, LIFE_AI_ROTATION_TOKENS: "broken" }).systemMessage, /not confirmed/);
   assert.equal(f.run().decision, "block");
   const directory = join(f.home, ".life-ai/orchestrator-rotation");
   for (const file of readdirSync(directory)) {
@@ -180,7 +180,7 @@ test("missing or malformed transcript, event, usage and state fail open", (t) =>
     assert.equal(statSync(path).mode & 0o777, 0o600);
     writeFileSync(path, "broken");
   }
-  assert.equal(f.run(), undefined);
+  assert.match(f.run().systemMessage, /not confirmed/);
 });
 
 test("concurrent process hooks claim once and independent sessions still rotate", async (t) => {
@@ -353,7 +353,7 @@ test("automatic preservation is independent of missing, null and malformed trans
   }
   writeFileSync(f.transcript, `{broken\n${JSON.stringify({ type: "user", message: { content: marker } })}`);
   assert.match(f.run({ hook_event_name: "PreCompact", trigger: "auto" }), /EVERY known active task id/);
-  assert.equal(f.run(), undefined, "proactive Stop usage still fails open on malformed transcripts");
+  assert.match(f.run().systemMessage, /not confirmed/);
   for (const provider of ["claude", "codex"]) {
     const fresh = fixture(t, provider);
     assert.equal(fresh.run({ hook_event_name: "PreCompact", trigger: "manual", transcript_path: null }), undefined);
@@ -400,12 +400,14 @@ test("concurrent native registrations retain a negative first decision and check
   );
 });
 
-test("invalid private checkpoints fail open without claiming successful preservation", (t) => {
+test("invalid private checkpoints warn without claiming successful preservation", (t) => {
   const f = fixture(t, "codex");
   const input = join(f.home, ".life-ai/orchestrate/life-ai-builds/current-handoff-input.json");
   const valid = readFileSync(input, "utf8");
   writeFileSync(input, "{}");
-  assert.equal(f.run({ hook_event_name: "PreCompact", trigger: "auto" }), undefined);
+  const failed = f.run({ hook_event_name: "PreCompact", trigger: "auto" });
+  assert.match(failed.systemMessage, /continuity preservation failed/);
+  assert.doesNotMatch(failed.systemMessage, /[Rr]egistration|Private store snapshot/);
   assert.equal(f.run(), undefined);
   writeFileSync(input, valid);
   assert.equal(f.run({ hook_event_name: "PreCompact", trigger: "auto" }).continue, true);

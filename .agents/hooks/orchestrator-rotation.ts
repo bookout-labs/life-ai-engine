@@ -1,37 +1,49 @@
-import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
-import { z } from "zod";
+import { renderHandoff } from "../scripts/handoff-input.ts";
+import { array, boolean, integer, nonempty, optionalString, record, string } from "./parse.ts";
 
 const marker = "Life-AI-Session-Role: orchestrator";
-const eventSchema = z.object({
-  hook_event_name: z.enum(["UserPromptSubmit", "Stop", "PreCompact"]),
-  session_id: z.string().min(1),
-  transcript_path: z.string().min(1).nullish(),
-  prompt: z.string().optional(),
-  agent_id: z.string().min(1).nullish(),
-  trigger: z.string().optional(),
-});
-const usageSchema = z.object({
-  input_tokens: z.number().int().nonnegative(),
-  cache_read_input_tokens: z.number().int().nonnegative(),
-  cache_creation_input_tokens: z.number().int().nonnegative(),
-});
-const contentSchema = z.union([z.string(), z.array(z.object({ type: z.string(), text: z.string().optional() }))]);
-const rowSchema = z.object({
-  type: z.string(),
-  sessionId: z.string().optional(),
-  isSidechain: z.boolean().optional(),
-  isMeta: z.boolean().optional(),
-  message: z.object({ content: contentSchema.optional(), usage: z.unknown().optional() }).optional(),
-  payload: z
-    .object({ type: z.string().optional(), message: z.string().optional(), id: z.string().optional() })
-    .optional(),
-});
+function parseEvent(input: unknown) {
+  const event = record(input);
+  const name = string(event.hook_event_name);
+  if (!["UserPromptSubmit", "Stop", "PreCompact"].includes(name)) throw new Error("Unknown hook event");
+  return {
+    hook_event_name: name,
+    session_id: nonempty(event.session_id),
+    transcript_path: event.transcript_path == null ? undefined : nonempty(event.transcript_path),
+    prompt: optionalString(event.prompt),
+    agent_id: event.agent_id == null ? undefined : nonempty(event.agent_id),
+    trigger: optionalString(event.trigger),
+  };
+}
+
+function parseRow(input: unknown) {
+  const row = record(input);
+  const type = string(row.type);
+  const sessionId = optionalString(row.sessionId);
+  const isSidechain = row.isSidechain === undefined ? undefined : boolean(row.isSidechain);
+  if (row.isMeta !== undefined) boolean(row.isMeta);
+  let message: Record<string, unknown> | undefined;
+  if (row.message !== undefined) {
+    message = record(row.message);
+    if (message.content !== undefined && typeof message.content !== "string") {
+      for (const part of array(message.content)) {
+        const content = record(part);
+        string(content.type);
+        optionalString(content.text);
+      }
+    }
+  }
+  if (row.payload !== undefined) {
+    const payload = record(row.payload);
+    for (const key of ["type", "message", "id"]) optionalString(payload[key]);
+  }
+  return { type, sessionId, isSidechain, message };
+}
 
 const handoff = `Prepare a private Life AI orchestrator handoff now.
 Read docs/orchestrator-handoff.md for the required JSON contract.
@@ -61,44 +73,28 @@ function latestUsage(path: string, session: string) {
   let latest: unknown;
   for (const line of readFileSync(path, "utf8").split("\n")) {
     if (!line.trim()) continue;
-    const row = rowSchema.parse(JSON.parse(line));
+    const row = parseRow(JSON.parse(line));
     if (row.sessionId !== undefined && row.sessionId !== session) continue;
     if (row.isSidechain) continue;
     if (row.type === "assistant") latest = row.message?.usage;
   }
   if (latest === undefined) return 0;
-  const usage = usageSchema.parse(latest);
-  return usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens;
+  const usage = record(latest);
+  return (
+    integer(usage.input_tokens) + integer(usage.cache_read_input_tokens) + integer(usage.cache_creation_input_tokens)
+  );
 }
 
-const checkpointSchema = z.object({
-  schema: z.literal("orchestrator-store-snapshot/v1"),
-  programStore: z.string(),
-  files: z
-    .object({
-      "preferences.md": z.string().min(1),
-      "agents.json": z.string().min(1),
-      "current-handoff-input.json": z.string().min(1),
-      "current-handoff-slug.txt": z.string().regex(/^handoff\/[^\s]+\s*$/),
-    })
-    .catchall(z.string()),
-});
-
 function validateCheckpoint(input: unknown) {
-  const snapshot = checkpointSchema.parse(input);
-  z.record(z.string(), z.object({ taskId: z.string().min(1) }).passthrough()).parse(
-    JSON.parse(snapshot.files["agents.json"]),
-  );
-  const validation = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL("../scripts/handoff.ts", import.meta.url)), "validate"],
-    {
-      input: snapshot.files["current-handoff-input.json"],
-      encoding: "utf8",
-      maxBuffer: 4096,
-    },
-  );
-  if (validation.status !== 0) throw new Error("Stored handoff failed validation");
+  const value = record(input);
+  if (value.schema !== "orchestrator-store-snapshot/v1") throw new Error("Invalid snapshot schema");
+  const files = Object.fromEntries(Object.entries(record(value.files)).map(([name, text]) => [name, string(text)]));
+  for (const name of ["preferences.md", "agents.json", "current-handoff-input.json", "current-handoff-slug.txt"])
+    nonempty(files[name]);
+  if (!/^handoff\/[^\s]+\s*$/.test(files["current-handoff-slug.txt"] ?? "")) throw new Error("Invalid handoff slug");
+  const snapshot = { schema: value.schema, programStore: string(value.programStore), files };
+  for (const job of Object.values(record(JSON.parse(nonempty(files["agents.json"]))))) nonempty(record(job).taskId);
+  renderHandoff(JSON.parse(nonempty(snapshot.files["current-handoff-input.json"])));
   return snapshot;
 }
 
@@ -144,7 +140,7 @@ No launch, archive or pin authority is granted. Read docs/orchestrator-handoff.m
 }
 
 function decide(input: unknown, provider: "claude" | "codex") {
-  const event = eventSchema.parse(input);
+  const event = parseEvent(input);
   if (event.agent_id || (event.hook_event_name === "PreCompact" && event.trigger !== "auto")) return;
   const directory = join(homedir(), ".life-ai", "orchestrator-rotation");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -160,13 +156,13 @@ function decide(input: unknown, provider: "claude" | "codex") {
       "PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS claims (event TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS registration (id INTEGER PRIMARY KEY CHECK(id=1), opted INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS preservation (id INTEGER PRIMARY KEY CHECK(id=1), path TEXT NOT NULL); BEGIN IMMEDIATE",
     );
     if (event.hook_event_name === "UserPromptSubmit") {
-      const prompt = z.string().parse(event.prompt);
+      const prompt = string(event.prompt);
       db.prepare("INSERT OR IGNORE INTO registration(id,opted) VALUES (1,?)").run(
         Number(prompt.split(/\r?\n/).includes(marker)),
       );
       db.exec("COMMIT");
       const saved = db.prepare("SELECT path FROM preservation WHERE id=1").get();
-      if (saved) return recovery(z.string().parse(saved.path));
+      if (saved) return recovery(string(saved.path));
       return;
     }
     // A session first seen after prompt submission cannot opt in later.
@@ -202,7 +198,7 @@ Read docs/orchestrator-handoff.md. Preserve private references without exposing 
       const threshold =
         process.env.LIFE_AI_ROTATION_TOKENS === undefined
           ? undefined
-          : z.coerce.number().int().positive().parse(process.env.LIFE_AI_ROTATION_TOKENS);
+          : integer(Number(process.env.LIFE_AI_ROTATION_TOKENS), 1);
       if (provider === "codex" || threshold === undefined || !event.transcript_path || tokens < threshold) {
         db.exec("COMMIT");
         return;
@@ -212,16 +208,17 @@ Read docs/orchestrator-handoff.md. Preserve private references without exposing 
     const saved = db.prepare("SELECT path FROM preservation WHERE id=1").get();
     db.exec("COMMIT");
     if (!result.changes) return;
-    return { decision: "block", reason: saved ? `${recovery(z.string().parse(saved.path))}\n${handoff}` : handoff };
+    return { decision: "block", reason: saved ? `${recovery(string(saved.path))}\n${handoff}` : handoff };
   } finally {
     db.close();
   }
 }
 
 if (import.meta.main) {
+  let eventName: unknown;
   try {
     if (process.argv[2] === "read-checkpoint") {
-      const path = z.string().parse(process.argv[3]);
+      const path = string(process.argv[3]);
       const body = readFileSync(path, "utf8");
       const snapshot = validateCheckpoint(JSON.parse(body));
       if (!path.endsWith(`${createHash("sha256").update(body).digest("hex")}.json`))
@@ -229,14 +226,25 @@ if (import.meta.main) {
       process.stdout.write(process.argv.includes("--full") ? JSON.stringify(snapshot) : recovery(path));
       process.exit(0);
     }
-    const provider = z.enum(["claude", "codex"]).parse(process.argv[2]);
-    const result = decide(JSON.parse(readFileSync(0, "utf8")), provider);
+    const provider = process.argv[2];
+    if (provider !== "claude" && provider !== "codex") throw new Error("Unknown provider");
+    const input = record(JSON.parse(readFileSync(0, "utf8")));
+    eventName = input.hook_event_name;
+    const result = decide(input, provider);
     if (result) process.stdout.write(typeof result === "string" ? result : JSON.stringify(result));
   } catch {
     if (process.argv[2] === "read-checkpoint") {
       process.stderr.write("Checkpoint recovery failed validation.\n");
       process.exitCode = 1;
+    } else {
+      process.stdout.write(
+        JSON.stringify({
+          systemMessage:
+            eventName === "PreCompact"
+              ? "Life AI continuity preservation failed. Check the checkout and private state before continuing."
+              : "Life AI orchestrator hook failed. Registration or continuity preservation was not confirmed. Check the checkout and private state before continuing.",
+        }),
+      );
     }
-    // Native hooks fail open. Recovery commands fail visibly.
   }
 }
