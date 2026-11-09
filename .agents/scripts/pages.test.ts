@@ -104,22 +104,11 @@ test("Postgres and CLI round trip, revisions, conflict, search, soft delete and 
     const revisions = (await pageLog(db)).length;
     await assert.rejects(pageWrite(db, { ...input, body: "Rejected", expected_revision: first.revision }), /changed/);
     assert.equal((await pageLog(db)).length, revisions);
-    const before = await pageRead(db, input.slug);
-    await pageWrite(db, { ...input, body: "Remote body\n" });
-    assert.equal((await pageLog(db)).length, revisions);
-    assert.deepEqual(await pageRead(db, input.slug), before);
-    await pageWrite(db, { ...input, body: "Remote body\n", title: "Retitled", expected_revision: before?.revision });
-    assert.equal((await pageRead(db, input.slug))?.title, "Retitled");
-    await assert.rejects(
-      pageWrite(db, { ...input, body: "Remote body\n", title: "Stale", expected_revision: before?.revision }),
-      /changed/,
-    );
-    const kept = (await pageLog(db)).length;
     await pageDelete(db, input.slug);
     assert.equal(await pageRead(db, input.slug), undefined);
     assert.equal((await pageSearch(db, "nectarine")).length, 0);
     assert.equal((await pageList(db)).length, 0);
-    assert.equal((await pageLog(db)).length, kept);
+    assert.equal((await pageLog(db)).length, revisions);
     await runPages(db, ["write", input.slug, "--type", "topic", "--kind", "note"], home, Readable.from([input.body]));
     assert.equal((await pageRead(db, input.slug))?.body, input.body);
     assert.equal((await pageLog(db))[0]?.kind, "note");

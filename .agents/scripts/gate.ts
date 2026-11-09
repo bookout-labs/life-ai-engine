@@ -60,7 +60,7 @@ try {
   const rounds = roundsSinceRegroup(counted.map((c) => c.body));
   if (rounds >= MAX_ROUNDS) {
     throw new Error(
-      `#${issue} has ${rounds} blocked review rounds. Stop patching: comment "Regroup: <what failed, the new approach>" on the issue, build that, then save again.`,
+      `#${issue} has ${rounds} blocked review rounds. Stop patching: the building agent comments "Regroup: <what failed, the new approach>" on the issue itself, builds that, then saves again.`,
     );
   }
 
