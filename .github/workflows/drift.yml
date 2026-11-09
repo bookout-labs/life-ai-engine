@@ -1,0 +1,58 @@
+# Nightly: production must match main, and nothing personal has reached the public tree. GitHub emails a failure.
+name: drift
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      # The term list grows after the fact; a term added today must not already be sitting in history. Counts only.
+      - name: No personal term anywhere in the tree or in the last two days of history
+        env:
+          PERSONAL_TERMS: ${{ secrets.PERSONAL_TERMS }}
+        run: |
+          node --input-type=module -e '
+            import { added, leaks } from "./.agents/scripts/proof.ts";
+            import { execFileSync } from "node:child_process";
+            const run = (args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 1 << 28 });
+            const tree = run(["grep", "--text", "-n", "", "HEAD", "--", "."]);
+            const history = run(["log", "-p", "--since=2.days", "--format=%B"]);
+            const messages = run(["log", "--since=2.days", "--format=%B"]);
+            const n = leaks([tree, added(history), messages]);
+            if (n) { console.error(`::error::${n} line(s) match the personal-term list.`); process.exit(1); }
+          '
+      - name: Live Worker was deployed by ship.yml from main's latest Worker code
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          cfg=apps/mcp/wrangler.jsonc
+          for v in $(npx wrangler deployments status -c $cfg --json | jq -r '.versions[].version_id'); do
+            tag=$(npx wrangler versions view "$v" -c $cfg --json | jq -r '.annotations["workers/tag"] // empty')
+            [ -n "$tag" ] || { echo "::error::Live version $v has no commit tag: deployed outside ship.yml."; exit 1; }
+            git merge-base --is-ancestor "$tag" HEAD || { echo "::error::Live version $v is tagged $tag, which is not on main."; exit 1; }
+            git diff --quiet "$tag" HEAD -- apps/mcp packages package-lock.json || { echo "::error::main has Worker changes after $tag that never went live."; exit 1; }
+            echo "Live version $v matches main at $tag."
+          done
+      # libpq needs PostgreSQL 18's pg_dump to read Neon's Postgres 18 schema.
+      - run: sudo apt-get install -y postgresql-common && sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y && sudo apt-get install -y postgresql-client-18
+      - name: Production schema equals db/schema.sql
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          export DATABASE_URL="$DATABASE_URL&sslrootcert=system"
+          npx dbmate status --exit-code
+          npx dbmate dump
+          git diff --exit-code db/schema.sql || { echo "::error::Production schema differs from db/schema.sql: a change was made outside migrations."; exit 1; }

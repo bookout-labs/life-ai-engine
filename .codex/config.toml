@@ -1,0 +1,9 @@
+[mcp_servers.monarch]
+url = "https://api.monarch.com/mcp"
+
+[features]
+memories = false
+
+[memories]
+generate_memories = false
+use_memories = false

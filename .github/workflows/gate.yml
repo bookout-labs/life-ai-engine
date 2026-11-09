@@ -1,0 +1,76 @@
+# The judge. pull_request_target runs THIS file and the checkout from main, never from the PR, so no change can
+# approve itself by editing the gate. PR code is only read (diffed, reviewed), never installed or executed here.
+name: gate
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+  merge_group:
+# One judgment per PR head: a push and a title edit must not race or double-count rounds.
+concurrency:
+  group: gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Fork PRs get no gate check and so can never merge; agents push branches to this repo through the App.
+    steps:
+      - if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+        run: exit 1
+      # The queue re-runs `check` on the combined tree; the judgment on this head already happened at PR level.
+      - if: github.event_name == 'merge_group'
+        run: echo "gate judged this head on its pull request"
+      - if: github.event_name == 'pull_request_target'
+        uses: actions/checkout@v7 # main, not the PR
+        with:
+          fetch-depth: 0
+      - if: github.event_name == 'pull_request_target'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - name: Claude CLI for reviewing Codex-built changes
+        if: github.event_name == 'pull_request_target'
+        run: npm install -g @anthropic-ai/claude-code@2.1.319
+      - name: Paths, personal terms, board issue, proof, cross-family review, round cap
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          PERSONAL_TERMS: ${{ secrets.PERSONAL_TERMS }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: node .agents/scripts/gate.ts
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+        run: exit 1
+      - if: github.event_name == 'merge_group'
+        run: echo "scanned on the pull request"
+      - if: github.event_name == 'pull_request_target'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: No secrets in this PR's commits
+        if: github.event_name == 'pull_request_target'
+        env:
+          V: 8.30.1
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags origin "pull/$PR/head"
+          base=https://github.com/gitleaks/gitleaks/releases/download/v$V
+          curl -sSfLO $base/gitleaks_${V}_linux_x64.tar.gz -O $base/gitleaks_${V}_checksums.txt
+          grep " gitleaks_${V}_linux_x64.tar.gz$" gitleaks_${V}_checksums.txt | sha256sum -c -
+          tar xzf gitleaks_${V}_linux_x64.tar.gz gitleaks
+          ./gitleaks git --redact --log-opts="$BASE..$HEAD"

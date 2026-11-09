@@ -1,0 +1,72 @@
+# After a merge: put changed code into production, prove it works there, and put the evidence on the board issue.
+# Merged is not done. Closing the issue stays a judgment; the board's built-in "Item closed → Done" moves the card.
+name: ship
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+concurrency:
+  group: ship
+  cancel-in-progress: false
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            files=$(git ls-tree -r --name-only "$GITHUB_SHA")
+          else
+            files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+          fi
+          echo "db=$(grep -q '^db/migrations/' <<<"$files" && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "worker=$(grep -qE '^(apps/mcp/|packages/|package-lock\.json|db/migrations/|\.github/workflows/ship\.yml)' <<<"$files" && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.changed.outputs.worker == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+      - if: steps.changed.outputs.worker == 'true'
+        run: npm ci
+      # Migrations go first so the Worker never runs against an older schema.
+      - name: Migrate Neon
+        if: steps.changed.outputs.db == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npx dbmate --no-dump-schema up && npx dbmate status --exit-code
+      - name: Deploy the Worker
+        if: steps.changed.outputs.worker == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        # The commit tag is how drift.yml tells a ship deploy from a hand deploy; --strict refuses to overwrite remote edits.
+        run: npm run deploy -- --tag "$GITHUB_SHA" --message "ship $GITHUB_SHA" --strict
+      - name: Prove it in production
+        if: steps.changed.outputs.worker == 'true'
+        env:
+          PUBLIC_ORIGIN: ${{ secrets.PUBLIC_ORIGIN }}
+        run: npm run smoke
+      # The PR body carries Board: and Proof: (gate.ts required them); the evidence lands on the issue it names.
+      - name: Post the evidence on the board issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          WORKER: ${{ steps.changed.outputs.worker }}
+        run: |
+          if [ "$WORKER" = true ]; then result="Production check passed (deployed and smoke-tested)"; else result="Merged; these paths have no production deploy"; fi
+          # A merge-queue push can carry several PRs; each one's issue gets its evidence.
+          if [[ "$BEFORE" =~ ^0+$ ]]; then commits=$GITHUB_SHA; else commits=$(git rev-list "$BEFORE..$GITHUB_SHA"); fi
+          prs=$(for sha in $commits; do gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" --jq '.[] | select(.merged_at) | .number'; done | sort -u)
+          for pr in $prs; do
+            issue=$(gh pr view "$pr" --json body --jq .body | grep -oE '^Board: #[0-9]+' | head -1 | tr -dc 0-9)
+            [ -n "$issue" ] && gh issue comment "$issue" -b "$result. PR #$pr. Evidence $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          done
+          exit 0
