@@ -50,8 +50,14 @@ function projectHooks(repo: string) {
   } catch {
     // Without a merged copy there is no provenance, so approve nothing but still let trusted hooks run.
   }
+  let localMatches = false;
+  try {
+    localMatches = expected.equals(readFileSync(local));
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
   const warning =
-    canApprove && expected.equals(readFileSync(local))
+    canApprove && localMatches
       ? ""
       : `Codex project hook configuration differs. Resolved source ${source}; worktree ${local}. Hooks declared on main but missing from the primary (such as rotation) are inactive. ${remediation}`;
   const config = hooksFileSchema.parse(JSON.parse(expected.toString("utf8")));
@@ -115,10 +121,14 @@ function codex(method: string, params: object): Promise<unknown> {
   });
 }
 
-async function listHooks(repo: string): Promise<CodexHook[]> {
+// User and plugin hooks are not ours to judge, so only this repository's entries are validated.
+async function listHooks(repo: string, source: string): Promise<CodexHook[]> {
   const result = await codex("hooks/list", { cwds: [repo] });
-  const parsed = z.object({ data: z.array(z.object({ hooks: z.array(hookSchema) })).length(1) }).parse(result);
-  return parsed.data.flatMap((entry) => entry.hooks);
+  const parsed = z.object({ data: z.array(z.object({ hooks: z.array(z.unknown()) })).length(1) }).parse(result);
+  return parsed.data
+    .flatMap((entry) => entry.hooks)
+    .filter((hook) => z.object({ sourcePath: z.literal(source) }).safeParse(hook).success)
+    .map((hook) => hookSchema.parse(hook));
 }
 
 function deny(reason: string): void {
@@ -137,7 +147,7 @@ if (import.meta.main) {
       const repo = repoRoot(input.cwd ?? process.cwd());
       const project = projectHooks(repo);
       const loaded = async () => {
-        const hooks = (await listHooks(repo)).filter((hook) => hook.sourcePath === project.source);
+        const hooks = await listHooks(repo, project.source);
         if (hooks.length !== project.keys.length || project.keys.some((key) => !hooks.some((hook) => hook.key === key)))
           throw new Error(`Codex did not load all project hooks from ${project.source}. ${project.remediation}`);
         return hooks;
