@@ -130,8 +130,12 @@ let pr: string = gh(
   "--jq",
   ".[0].url // empty",
 );
-if (pr) gh("pr", "edit", pr, "--title", message, "--body", body);
-else
+if (pr) {
+  gh("pr", "edit", pr, "--title", message, "--body", body);
+  // Auto-merge stays bound to the commit it was first armed on, so a refreshed PR never queues; re-arm it.
+  if (gh("pr", "view", pr, "--json", "autoMergeRequest", "--jq", ".autoMergeRequest != null") === "true")
+    gh("pr", "merge", pr, "--disable-auto");
+} else
   pr = gh(
     "pr",
     "create",
