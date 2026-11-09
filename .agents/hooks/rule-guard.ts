@@ -1,7 +1,8 @@
 // Claude and Grok enforce .claude/settings.json permissions.deny natively, shell writes included.
 // This hook applies the same list to file-edit tools for every agent, and to shell writes for Codex.
 // Node built-ins only: a hook whose imports are missing fails open.
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, matchesGlob, resolve } from "node:path";
 import { repoRoot } from "./changes.ts";
@@ -56,23 +57,53 @@ export function protectedPaths(tool: string, toolInput: unknown, cwd: string, gl
 
 if (import.meta.main) {
   const input = readHookInput();
-  const cwd = input.cwd ?? process.cwd();
+  let cwd = input.cwd ?? process.cwd();
+  try {
+    // git reports the root by its real path (/var is /private/var on macOS), so paths must match it.
+    cwd = realpathSync(cwd);
+  } catch {
+    // A missing cwd still resolves paths as given.
+  }
   let root = cwd;
   try {
     root = repoRoot(cwd);
   } catch {
     // Outside a repo, cwd is the only anchor.
   }
-  const globs = denyGlobs(readFileSync(join(root, ".claude/settings.json"), "utf8"), root, homedir());
-  const tool = (input as { tool_name?: unknown }).tool_name;
-  if (protectedPaths(typeof tool === "string" ? tool : "", input.tool_input, cwd, globs, homedir()).length)
+  const raw = (input as { tool_name?: unknown }).tool_name;
+  const tool = typeof raw === "string" ? raw : "";
+  const deny = (reason: string) =>
     console.log(
       JSON.stringify({
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: "deny",
-          permissionDecisionReason: REASON,
+          permissionDecisionReason: reason,
         },
       }),
     );
+  // Main's list as well as this checkout's: an entry takes effect at once, but removing one takes a merged review.
+  const sources = [
+    () => readFileSync(join(root, ".claude/settings.json"), "utf8"),
+    () =>
+      execFileSync("git", ["show", "origin/main:.claude/settings.json"], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: "pipe",
+      }),
+  ];
+  const globs = sources.flatMap((read) => {
+    try {
+      return denyGlobs(read(), root, homedir());
+    } catch {
+      return [];
+    }
+  });
+  if (!globs.length) {
+    // Fail closed on file edits; shell stays open so the agent can restore the file.
+    if (!/Bash|exec_command|shell/i.test(tool))
+      deny("Can't read the protected list in .claude/settings.json. Restore it with git first.");
+    process.exit(0);
+  }
+  if (protectedPaths(tool, input.tool_input, cwd, globs, homedir()).length) deny(REASON);
 }

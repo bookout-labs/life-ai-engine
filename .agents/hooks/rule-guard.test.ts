@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { denyGlobs, protectedPaths } from "./rule-guard.ts";
 
@@ -96,4 +98,34 @@ await test("hook emits the platform denial protocol with repair instructions, us
   assert.match(output.permissionDecisionReason, /entry in \.agents\/rules\.ts with trigger and a hook or check route/);
   assert.equal(run({ file_path: "notes.md" }).stdout, "");
   assert.doesNotMatch(readFileSync(".agents/hooks/rule-guard.ts", "utf8"), /from "(?!node:|\.\/)/);
+});
+
+await test("fails closed on file edits when the protected list can't be read, but leaves the shell open to restore it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rule-guard-"));
+  const run = (tool: string, toolInput: unknown) =>
+    spawnSync(process.execPath, [".agents/hooks/rule-guard.ts"], {
+      input: JSON.stringify({ cwd: dir, tool_name: tool, tool_input: toolInput }),
+      encoding: "utf8",
+    });
+  const edit = run("Write", { file_path: "notes.md" });
+  assert.equal(edit.status, 0, edit.stderr);
+  assert.equal(JSON.parse(edit.stdout).hookSpecificOutput.permissionDecision, "deny");
+  assert.equal(run("exec_command", { cmd: "git checkout .claude/settings.json" }).stdout, "");
+});
+
+await test("an entry removed from this checkout's list still applies from main's", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rule-guard-repo-"));
+  const git = (...args: string[]) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  git("init", "-q");
+  mkdirSync(join(dir, ".claude"));
+  writeFileSync(join(dir, ".claude/settings.json"), JSON.stringify({ permissions: { deny: ["Edit(**/AGENTS.md)"] } }));
+  git("add", ".");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "list");
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
+  writeFileSync(join(dir, ".claude/settings.json"), JSON.stringify({ permissions: { deny: [] } }));
+  const result = spawnSync(process.execPath, [".agents/hooks/rule-guard.ts"], {
+    input: JSON.stringify({ cwd: dir, tool_name: "Write", tool_input: { file_path: "AGENTS.md" } }),
+    encoding: "utf8",
+  });
+  assert.match(result.stdout, /Instruction and memory files are protected/);
 });
