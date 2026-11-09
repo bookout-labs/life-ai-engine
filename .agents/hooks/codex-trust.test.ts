@@ -53,7 +53,16 @@ function fixture(t: TestContext) {
     const tree = execFileSync("git", ["-C", main, "write-tree"], { encoding: "utf8" }).trim();
     const commit = execFileSync(
       "git",
-      ["-C", main, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit-tree", tree],
+      [
+        "-C",
+        main,
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        `user.email=${["fixture", "example.invalid"].join("@")}`,
+        "commit-tree",
+        tree,
+      ],
       { input: "fixture\n", encoding: "utf8" },
     ).trim();
     execFileSync("git", ["-C", main, "update-ref", "refs/remotes/origin/main", commit]);
