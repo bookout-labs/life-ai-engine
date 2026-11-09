@@ -1,7 +1,6 @@
 // Claude and Grok enforce .claude/settings.json permissions.deny natively, shell writes included.
-// This hook applies the same list to file-edit tools for every agent, and to shell writes for Codex.
+// This hook applies its built-in list, plus any extra entries there, to file-edit tools for every agent and to shell writes for Codex.
 // Node built-ins only: a hook whose imports are missing fails open.
-import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, matchesGlob, resolve } from "node:path";
@@ -11,10 +10,22 @@ import { editedPaths, readHookInput } from "./edits.ts";
 const REASON =
   "Instruction and memory files are protected. Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write.";
 
+// Always enforced, whatever the editable settings say; a test keeps .claude/settings.json a superset for native enforcement.
+export const CORE = [
+  "Edit(**/AGENTS.md)",
+  "Edit(**/CLAUDE.md)",
+  "Edit(/.claude/rules/**)",
+  "Edit(~/.claude/CLAUDE.md)",
+  "Edit(~/.claude/rules/**)",
+  "Edit(~/.claude/projects/*/memory/**)",
+  "Edit(~/.codex/AGENTS.md)",
+  "Edit(~/.codex/rules/**)",
+  "Edit(~/.codex/memories*)",
+];
+
 // Claude's anchors: ~/ is home, // is the filesystem root, anything else is the project.
-export function denyGlobs(settings: string, root: string, home: string): string[] {
-  const deny: unknown = JSON.parse(settings).permissions?.deny;
-  return (Array.isArray(deny) ? deny : []).flatMap((rule) => {
+export function denyGlobs(rules: unknown[], root: string, home: string): string[] {
+  return rules.flatMap((rule) => {
     const glob = /^Edit\((.+)\)$/.exec(String(rule))?.[1];
     if (!glob) return [];
     if (glob.startsWith("~/")) return [join(home, glob.slice(2))];
@@ -82,24 +93,12 @@ if (import.meta.main) {
         },
       }),
     );
-  // Main's list as well as this checkout's: an entry takes effect at once, but removing one takes a merged review.
-  const sources = [
-    () => readFileSync(join(root, ".claude/settings.json"), "utf8"),
-    () =>
-      execFileSync("git", ["show", "origin/main:.claude/settings.json"], {
-        cwd: root,
-        encoding: "utf8",
-        stdio: "pipe",
-      }),
-  ];
-  const globs = sources.flatMap((read) => {
-    try {
-      return denyGlobs(read(), root, homedir());
-    } catch {
-      return [];
-    }
-  });
-  // Neither list readable: keep guarding the core files, everywhere, so recovery is never a gap.
-  if (!globs.length) globs.push(...[`${root}/**/AGENTS.md`, `${root}/**/CLAUDE.md`]);
+  let extra: unknown = [];
+  try {
+    extra = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8")).permissions?.deny;
+  } catch {
+    // Unreadable settings leave the built-in list in force.
+  }
+  const globs = denyGlobs([...CORE, ...(Array.isArray(extra) ? extra : [])], root, homedir());
   if (protectedPaths(tool, input.tool_input, cwd, globs, homedir()).length) deny(REASON);
 }

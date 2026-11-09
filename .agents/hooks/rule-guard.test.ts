@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { denyGlobs, protectedPaths } from "./rule-guard.ts";
+import { CORE, denyGlobs, protectedPaths } from "./rule-guard.ts";
 
 const root = "/repo";
 const home = "/home/u";
 // The real deny list, so the hook and Claude's native rules can't drift apart.
-const globs = denyGlobs(readFileSync(".claude/settings.json", "utf8"), root, home);
+const globs = denyGlobs(CORE, root, home);
 const blocked = (toolInput: unknown, cwd = root, tool = "Write") =>
   protectedPaths(tool, toolInput, cwd, globs, home).length > 0;
 
@@ -28,10 +28,11 @@ const protectedFiles = [
 ];
 
 await test("anchors deny rules the way Claude does", () => {
-  const settings = JSON.stringify({
-    permissions: { deny: ["Edit(~/a/**)", "Edit(//etc/x)", "Edit(/b.md)", "Read(c)"] },
-  });
-  assert.deepEqual(denyGlobs(settings, root, home), [`${home}/a/**`, "/etc/x", `${root}/b.md`]);
+  assert.deepEqual(denyGlobs(["Edit(~/a/**)", "Edit(//etc/x)", "Edit(/b.md)", "Read(c)"], root, home), [
+    `${home}/a/**`,
+    "/etc/x",
+    `${root}/b.md`,
+  ]);
 });
 
 for (const path of protectedFiles)
@@ -100,32 +101,27 @@ await test("hook emits the platform denial protocol with repair instructions, us
   assert.doesNotMatch(readFileSync(".agents/hooks/rule-guard.ts", "utf8"), /from "(?!node:|\.\/)/);
 });
 
-await test("with no readable list it still guards AGENTS.md and CLAUDE.md, in edits and shell, and nothing else", () => {
+await test(".claude/settings.json carries every built-in entry, so Claude and Grok enforce them natively", () => {
+  const deny: string[] = JSON.parse(readFileSync(".claude/settings.json", "utf8")).permissions.deny;
+  for (const rule of CORE) assert.ok(deny.includes(rule), rule);
+});
+
+await test("the built-in list holds even when settings drop it or can't be read", () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "rule-guard-")));
   const denied = (tool: string, toolInput: unknown) =>
     spawnSync(process.execPath, [".agents/hooks/rule-guard.ts"], {
       input: JSON.stringify({ cwd: dir, tool_name: tool, tool_input: toolInput }),
       encoding: "utf8",
     }).stdout.includes('"deny"');
-  assert.ok(denied("Write", { file_path: "AGENTS.md" }));
-  assert.ok(denied("exec_command", { cmd: "echo x > wiki/CLAUDE.md" }));
-  assert.equal(denied("Write", { file_path: "notes.md" }), false);
-  assert.equal(denied("exec_command", { cmd: "git checkout .claude/settings.json" }), false);
-});
-
-await test("an entry removed from this checkout's list still applies from main's", () => {
-  const dir = mkdtempSync(join(tmpdir(), "rule-guard-repo-"));
-  const git = (...args: string[]) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
-  git("init", "-q");
-  mkdirSync(join(dir, ".claude"));
-  writeFileSync(join(dir, ".claude/settings.json"), JSON.stringify({ permissions: { deny: ["Edit(**/AGENTS.md)"] } }));
-  git("add", ".");
-  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "list");
-  git("update-ref", "refs/remotes/origin/main", "HEAD");
-  writeFileSync(join(dir, ".claude/settings.json"), JSON.stringify({ permissions: { deny: [] } }));
-  const result = spawnSync(process.execPath, [".agents/hooks/rule-guard.ts"], {
-    input: JSON.stringify({ cwd: dir, tool_name: "Write", tool_input: { file_path: "AGENTS.md" } }),
-    encoding: "utf8",
-  });
-  assert.match(result.stdout, /Instruction and memory files are protected/);
+  for (const settings of [undefined, "{not json", JSON.stringify({ permissions: { deny: ["Edit(notes.md)"] } })]) {
+    if (settings) {
+      mkdirSync(join(dir, ".claude"), { recursive: true });
+      writeFileSync(join(dir, ".claude/settings.json"), settings);
+    }
+    assert.ok(denied("Write", { file_path: "AGENTS.md" }), `edit, settings ${settings}`);
+    assert.ok(denied("exec_command", { cmd: "echo x > wiki/CLAUDE.md" }), `shell, settings ${settings}`);
+    assert.ok(denied("Write", { file_path: join(homedir(), ".codex/AGENTS.md") }), `global, settings ${settings}`);
+    assert.equal(denied("Write", { file_path: "other.md" }), false);
+  }
+  assert.ok(denied("Write", { file_path: "notes.md" }), "a local extra entry applies too");
 });
