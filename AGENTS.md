@@ -12,6 +12,7 @@ Use short, plain answers, visual explanations, existing tools and lean TypeScrip
 
 ## Routed rules
 
+- **instruction-paths**: Repository paths named in backticks in instructions, docs, skills and rules must exist. Trigger: npm run check. Route: check `.agents/scripts/instruction-paths.ts`.
 - **rules**: Rules require a trigger and a hook or check route; AGENTS.md is generated. Trigger: npm run check. Route: check `.agents/scripts/rules.ts`.
 - **instruction-writes**: Direct writes to generated instructions and agent memory are blocked. Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write. Trigger: instruction or memory write. Route: hook `.agents/hooks/rule-guard.ts` (PreToolUse).
 - **save**: Raw git commit, git push and gh pr merge are blocked; save.ts owns saving. Trigger: shell save. Route: hook `.agents/hooks/guard.ts` (PreToolUse).
