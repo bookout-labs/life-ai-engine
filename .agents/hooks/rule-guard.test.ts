@@ -59,6 +59,8 @@ for (const path of protectedFiles)
       `mv a '${path}'`,
       `rm '${path}'`,
       `touch '${path}'`,
+      `truncate -s 0 '${path}'`,
+      `unlink '${path}'`,
     ])
       assert.ok(blocked({ cmd: command }, root, "exec_command"), `Codex shell: ${command}`);
   });

@@ -58,7 +58,9 @@ function shellTargets(command: string): string[] {
         token.replace(/^(['"])(.*)\1$/, "$2"),
       );
       const writer = tokens.findIndex(
-        (token) => /^(?:tee|cp|mv|rm|touch)$/.test(token) || (token === "sed" && tokens.some((t) => /^-i/.test(t))),
+        (token) =>
+          /^(?:tee|cp|mv|rm|unlink|touch|truncate)$/.test(token) ||
+          (token === "sed" && tokens.some((t) => /^-i/.test(t))),
       );
       const operands = writer >= 0 ? tokens.slice(writer + 1).filter((token) => !token.startsWith("-")) : [];
       return [
