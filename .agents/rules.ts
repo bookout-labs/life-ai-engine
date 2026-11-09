@@ -22,6 +22,12 @@ Use short, plain answers, visual explanations, existing tools and lean TypeScrip
 
 export const RULES: Rule[] = [
   {
+    id: "instruction-paths",
+    rule: "Repository paths named in backticks in instructions, docs, skills and rules must exist.",
+    trigger: "npm run check",
+    route: { kind: "check", file: ".agents/scripts/instruction-paths.ts" },
+  },
+  {
     id: "rules",
     rule: "Rules require a trigger and a hook or check route; AGENTS.md is generated.",
     trigger: "npm run check",
