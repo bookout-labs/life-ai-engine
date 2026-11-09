@@ -43,6 +43,7 @@ test("covers agent maps, docs, skills and rules but leaves application prose alo
     "CLAUDE.md",
     "docs/readme.md",
     ".agents/rules/note.md",
+    ".agents/jobs/nightly.md",
     ".agents/skills/a/SKILL.md",
     ".claude/rules/a.md",
     ".codex/skills/a/SKILL.md",
@@ -50,7 +51,7 @@ test("covers agent maps, docs, skills and rules but leaves application prose alo
   ])
     put(file, "Read `docs/missing.md`.\n");
   put("apps/example.md", "Read `another/missing.md`.\n");
-  assert.equal(instructionPaths(repo).length, 8);
+  assert.equal(instructionPaths(repo).length, 9);
 });
 
 test("ignores non-path code, external locations, URLs and placeholders", (t) => {
@@ -60,4 +61,13 @@ test("ignores non-path code, external locations, URLs and placeholders", (t) => 
     "`npm run check` `read <slug>` `--no-wait` `https://example.com/a.md` `~/.config/tool.json` `$HOME/a.md` `/today` `../outside.md` `.agents/{name}.ts`\n",
   );
   assert.deepEqual(instructionPaths(repo), []);
+});
+
+test("deleting conventional extensionless files leaves a failing reference", (t) => {
+  const { repo, put } = fixture(t);
+  put("AGENTS.md", "Read `LICENSE`, `Makefile` and `Dockerfile`.\n");
+  for (const file of ["LICENSE", "Makefile", "Dockerfile"]) put(file);
+  assert.deepEqual(instructionPaths(repo), []);
+  for (const file of ["LICENSE", "Makefile", "Dockerfile"]) rmSync(join(repo, file));
+  assert.equal(instructionPaths(repo).length, 3);
 });

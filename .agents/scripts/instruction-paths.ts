@@ -1,6 +1,20 @@
 import { existsSync, globSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
+const EXTENSIONLESS = new Set([
+  "LICENSE",
+  "LICENCE",
+  "COPYING",
+  "NOTICE",
+  "Makefile",
+  "Dockerfile",
+  "Containerfile",
+  "Justfile",
+  "Procfile",
+  "README",
+  "CHANGELOG",
+]);
+
 export function instructionPaths(repo: string): string[] {
   const files = globSync(
     [
@@ -8,7 +22,7 @@ export function instructionPaths(repo: string): string[] {
       "CLAUDE.md",
       "docs/**/*.md",
       ".agents/rules.ts",
-      ".agents/{rules,skills}/**/*.md",
+      ".agents/{rules,skills,jobs}/**/*.md",
       ".claude/{rules,skills}/**/*.md",
       ".codex/{rules,skills}/**/*.md",
     ],
@@ -23,7 +37,13 @@ export function instructionPaths(repo: string): string[] {
           (match[1] ?? "").split(/\s+/).flatMap((word) => {
             const path = word.replace(/^["']|["',;)]$/g, "").replace(/:\d+(?::\d+)?$/, "");
             if (/^(?:[~@$]|\w+:)|[<>{}]/.test(path) || isAbsolute(path)) return [];
-            if (!path.includes("/") && !/^[.\w-]+\.[a-zA-Z][\w-]*$/.test(path) && !/^\.[\w-]+$/.test(path)) return [];
+            if (
+              !EXTENSIONLESS.has(path) &&
+              !path.includes("/") &&
+              !/^[.\w-]+\.[a-zA-Z][\w-]*$/.test(path) &&
+              !/^\.[\w-]+$/.test(path)
+            )
+              return [];
             const bases = [repo, dirname(source)];
             if (
               bases.some((base) => {
