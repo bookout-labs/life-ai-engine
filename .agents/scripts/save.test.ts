@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type TestContext, test } from "node:test";
 
+import { waitForMerge } from "./save-wait.ts";
+
 const root = resolve(import.meta.dirname, "../..");
 
 function fixture(t: TestContext) {
@@ -23,7 +25,7 @@ function fixture(t: TestContext) {
   };
   put("package.json", '{"type":"module"}');
   put(".gitignore", "node_modules/\n");
-  for (const file of ["save.ts", "proof.ts", "review.ts"]) {
+  for (const file of ["save.ts", "save-wait.ts", "proof.ts", "review.ts"]) {
     put(`.agents/scripts/${file}`, readFileSync(join(root, ".agents/scripts", file), "utf8"));
   }
   put(
@@ -83,7 +85,7 @@ ${readFileSync(join(repo, ".agents/scripts/proof.ts"), "utf8")}`,
     if (command === 'run list') console.log('123 https://example.invalid/run/123');
     if (command === 'pr list' && process.env.EXISTING) console.log('https://example.invalid/pr/1');
     if (command === 'pr create') console.log('https://example.invalid/pr/1');
-    if (command === 'pr view') console.log(process.env.MERGED ? 'MERGED' : 'OPEN');
+    if (command === 'pr view') console.log(JSON.stringify({state:process.env.MERGED ? 'MERGED' : 'OPEN', statusCheckRollup:['check','gate','secrets'].map(name => ({name,status:'COMPLETED',conclusion:process.env.MERGED ? 'SUCCESS' : 'FAILURE'}))}));
     if (command === 'pr checks' && !process.env.MERGED) { console.error('check failed: fixture diagnostic tail'); process.exit(1); }
   `,
   );
@@ -168,6 +170,80 @@ test("merge wait precedes ship wait", (t) => {
   const result = f.run({ MERGED: "1", MERGE_FIXTURE: "1" }, "docs/", ...args);
   assert.equal(result.status, 0, result.stderr);
   const calls = readFileSync(join(f.dir, "gh.log"), "utf8");
-  assert.ok(calls.indexOf('"pr","checks"') < calls.indexOf('"run","watch"'));
+  assert.ok(calls.indexOf('"pr","view"') < calls.indexOf('"run","watch"'));
   assert.match(result.stdout, /Production check passed/);
+});
+
+const check = (name: string, status = "COMPLETED", conclusion: string | null = "SUCCESS") => ({
+  name,
+  status,
+  conclusion,
+});
+const passed = [check("check"), check("gate"), check("secrets")];
+
+test("merge wait includes missing and pending checks and queue delay", async () => {
+  const snapshots = [
+    { state: "OPEN", statusCheckRollup: [] },
+    { state: "OPEN", statusCheckRollup: [check("check"), check("secrets")] },
+    { state: "OPEN", statusCheckRollup: [check("check"), check("secrets"), check("gate", "IN_PROGRESS", null)] },
+    { state: "OPEN", statusCheckRollup: passed },
+    { state: "MERGED", statusCheckRollup: passed },
+  ];
+  let pauses = 0;
+  await waitForMerge(() => JSON.stringify(snapshots.shift()), "pr", {
+    pause: async () => {
+      pauses++;
+    },
+  });
+  assert.equal(pauses, 4);
+  assert.equal(snapshots.length, 0);
+});
+for (const name of ["check", "gate", "secrets"])
+  test(`merge wait fails immediately when ${name} fails`, async () => {
+    await assert.rejects(
+      waitForMerge(
+        () => JSON.stringify({ state: "OPEN", statusCheckRollup: [check(name, "COMPLETED", "FAILURE")] }),
+        "pr",
+        {
+          pause: async () => {
+            assert.fail("must not wait after failure");
+          },
+        },
+      ),
+      new RegExp(`${name} failed`),
+    );
+  });
+test("merge wait times out even if all checks pass but the queue never merges", async () => {
+  let elapsed = 0;
+  await assert.rejects(
+    waitForMerge(() => JSON.stringify({ state: "OPEN", statusCheckRollup: passed }), "pr", {
+      now: () => elapsed,
+      pause: async () => {
+        elapsed += 5000;
+      },
+      timeoutMs: 30 * 60_000,
+    }),
+    /Timed out/,
+  );
+  assert.equal(elapsed, 30 * 60_000);
+});
+
+test("merge wait ignores superseded failed and canceled runs", async () => {
+  await waitForMerge(
+    () =>
+      JSON.stringify({
+        state: "MERGED",
+        statusCheckRollup: [
+          ...passed.map((c) => ({ ...c, startedAt: "2026-11-09T17:00:00Z" })),
+          { ...check("gate", "COMPLETED", "FAILURE"), startedAt: "2026-11-09T16:00:00Z" },
+          { ...check("secrets", "COMPLETED", "CANCELLED"), startedAt: "2026-11-09T16:00:00Z" },
+        ],
+      }),
+    "pr",
+    {
+      pause: async () => {
+        assert.fail("already merged with current checks successful");
+      },
+    },
+  );
 });

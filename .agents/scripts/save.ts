@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { added, leaks, missing, requireOpenIssue } from "./proof.ts";
+import { waitForMerge } from "./save-wait.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -141,25 +142,10 @@ if (values["no-wait"]) {
   process.exit(0);
 }
 
-// gh's own watcher costs no tokens. The merge queue and ship add a minute or two.
-for (let attempt = 0; ; attempt++) {
-  try {
-    gh("pr", "checks", pr, "--watch", "--fail-fast", "--interval", "5");
-    break;
-  } catch (err: unknown) {
-    const text = err instanceof Error ? err.message : String(err);
-    if (text.includes("no checks reported") && attempt < 12) {
-      await sleep(5000);
-      continue;
-    }
-    fail(
-      `checks failed on ${pr}. Fix, then save again; the same PR is reused.\n${text.trim().split("\n").slice(-8).join("\n")}`,
-    );
-  }
-}
-for (let i = 0; gh("pr", "view", pr, "--json", "state", "--jq", ".state") !== "MERGED"; i++) {
-  if (i >= 90) fail(`checks passed but ${pr} has not merged. Look at the merge queue on the PR.`);
-  await sleep(5000);
+try {
+  await waitForMerge(gh, pr);
+} catch (err) {
+  fail(err instanceof Error ? err.message : String(err));
 }
 // The queue merges with a merge commit, so this branch is its ancestor and fast-forwards onto the new main.
 git("pull", "--ff-only", "origin", "main");

@@ -17,7 +17,9 @@ function fixture(t: TestContext, options: Record<string, string> = {}) {
   script(
     "gh",
     `const fs=require('node:fs');const a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(join(dir, "calls"))},JSON.stringify(a)+'\\n');
-    if(a[0]==='api' && a[1]==='graphql') console.log(JSON.stringify({data:{repository:{pullRequest:{reviews:{nodes:[{author:{login:'chatgpt-codex-connector'},commit:{oid:process.env.OLD?'old':'head'},body:'Reviewed',comments:{nodes:process.env.BLOCK?[{path:'a.ts',line:null,body:'[P0] bug'}]:[]}}]}}}}}));
+    if(a[0]==='api' && a[1].endsWith('/reviews')) console.log(JSON.stringify([[{user:{login:'chatgpt-codex-connector[bot]'},commit_id:process.env.OLD?'old':'head',id:12,body:'Reviewed'}]]));
+    else if(a[0]==='api' && a[1].endsWith('/reviews/12/comments')) console.log(JSON.stringify([process.env.BLOCK?[{path:'a.ts',line:null,body:'[P0] bug'}]:[]]));
+    else if(a[0]==='api' && a[1].endsWith('/comments')) console.log('[[]]');
     else if(a[0]==='api') console.log(process.env.FOREIGN?'notes.md':'package.json');
     else if(a[0]==='issue'&&a[1]==='view') console.log(JSON.stringify({state:process.env.CLOSED?'CLOSED':'OPEN',title:'Synthetic issue',body:'Synthetic acceptance',comments:process.env.ROUNDS?Array(3).fill({body:'Review blocked (round 1/3)'}):[]}));`,
   );
@@ -53,7 +55,7 @@ for (const options of [
     const { result, calls } = fixture(t, options);
     assert.equal(result.status, 1, result.stdout + result.stderr);
     assert.doesNotMatch(result.stderr, /synthetic-private-marker/);
-    if (options.ROUNDS) assert.doesNotMatch(calls, /graphql/);
+    if (options.ROUNDS) assert.doesNotMatch(calls, /\/reviews/);
   });
 test("removed personal line passes and posts review receipt", (t) => {
   const { result, calls } = fixture(t, { DIFF: "-synthetic-private-marker\n+safe" });
