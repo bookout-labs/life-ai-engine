@@ -51,6 +51,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)\"/.agents/hooks/orchestrator-rotation.ts codex",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -74,6 +83,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)\"/.agents/hooks/orchestrator-rotation.ts codex",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -86,6 +104,18 @@
             "timeout": 10
           }
         ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)\"/.agents/hooks/orchestrator-rotation.ts codex",
+            "timeout": 10
+          }
+        ],
+        "matcher": "auto"
       }
     ]
   }

@@ -2,7 +2,7 @@ type Route =
   | {
       kind: "hook";
       file: `.agents/${string}.ts`;
-      event: "SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop";
+      event: "SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop" | "PreCompact";
       // Tool names differ per agent; the check proves each config's matcher fires on these.
       tools: { claude: string[]; codex: string[] };
     }
@@ -21,6 +21,12 @@ Use short, plain answers, visual explanations, existing tools and lean TypeScrip
 .claude/skills/wiki owns knowledge maintenance; sunday owns family check-ins; lab owns building, research and tool choices. docs/skill-map.md is a catalog. Hooks deliver context on events; checks validate routes. .agents/rules.ts is the rule source and AGENTS.md is generated.`;
 
 export const RULES: Rule[] = [
+  {
+    id: "instruction-paths",
+    rule: "Repository paths named in backticks in instructions, docs, skills and rules must exist.",
+    trigger: "npm run check",
+    route: { kind: "check", file: ".agents/scripts/instruction-paths.ts" },
+  },
   {
     id: "rules",
     rule: "Rules require a trigger and a hook or check route; AGENTS.md is generated.",
@@ -103,6 +109,39 @@ export const RULES: Rule[] = [
     },
     inject: "~/.life-ai/pages/**/*.md",
     context: ".claude/skills/wiki/SKILL.md",
+  },
+  {
+    id: "orchestrator-registration",
+    rule: "Persist coordinator opt-in from the first native UserPromptSubmit prompt per provider session. Later prompts and workers cannot opt in.",
+    trigger: "first native user prompt",
+    route: {
+      kind: "hook",
+      file: ".agents/hooks/orchestrator-rotation.ts",
+      event: "UserPromptSubmit",
+      tools: { claude: [], codex: [] },
+    },
+  },
+  {
+    id: "orchestrator-rotation",
+    rule: "Only first-prompt opted-in orchestrators receive rotation instructions. Save private handoffs through pages.ts, recover active jobs without restarting them, and launch successors only with current user/session authority. Leave pins and retiring threads unchanged.",
+    trigger: "coordinator stop",
+    route: {
+      kind: "hook",
+      file: ".agents/hooks/orchestrator-rotation.ts",
+      event: "Stop",
+      tools: { claude: [], codex: [] },
+    },
+  },
+  {
+    id: "orchestrator-compaction",
+    rule: "Preserve automatic coordinator compaction with Claude summary instructions or a validated private Codex store snapshot. Manual compaction and workers remain unaffected. Model-specific proactive thresholds require explicit configuration.",
+    trigger: "automatic coordinator compaction",
+    route: {
+      kind: "hook",
+      file: ".agents/hooks/orchestrator-rotation.ts",
+      event: "PreCompact",
+      tools: { claude: [], codex: [] },
+    },
   },
   {
     id: "codex-trust",
