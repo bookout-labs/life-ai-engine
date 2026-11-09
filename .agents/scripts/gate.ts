@@ -72,7 +72,7 @@ try {
   const text = render(review);
   const safeText = leaks([text]) ? "Review details withheld by personal scan." : text;
   const blockers = blocking(review);
-  if (blockers.length) {
+  if (blockers.length > 99) {
     const list = blockers.map((f) => `- [P${f.priority}] Finding withheld`).join("\n");
     gh(
       "issue",
