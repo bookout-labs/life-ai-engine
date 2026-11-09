@@ -4,7 +4,7 @@ minVersion = "v8.30.1"
 [[rules]]
 id = "personal-email"
 description = "Email address shape"
-regex = '''(?i)[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}'''
+regex = '''(?i)[a-z0-9._%+-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.(?:xn--[a-z0-9-]*[a-z0-9]|[a-z]{2,})'''
 
 [[rules]]
 id = "personal-phone"
