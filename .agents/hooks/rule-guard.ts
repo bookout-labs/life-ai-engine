@@ -1,10 +1,10 @@
-// Claude and Grok enforce .claude/settings.json permissions.deny natively, shell writes included: Claude checks
-// >, >>, tee, cp, mv, rm and sed -i targets against Edit(...) rules, cd chains too (live test, #107, 2026-11-09).
-// This hook applies its built-in list, plus any extra entries there, to every agent's file edits and shell writes,
-// so emptying the settings file can't switch the guard off.
+// Threat model: stop a well-meaning agent's normal edits to instruction and memory files, so rules go through
+// .agents/rules.ts. Deliberate evasion and interpreter writes (node -e, python) are out of scope; CI's AGENTS.md
+// drift check is the wall for repo files (#91, #107).
+// Claude and Grok also enforce .claude/settings.json permissions.deny natively, their shell writes included.
+// This hook covers every agent's file edits and Codex's plain shell writes.
 // Node built-ins only: a hook whose imports are missing fails open.
-import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { repoRoot } from "./changes.ts";
@@ -13,7 +13,7 @@ import { editedPaths, readHookInput } from "./edits.ts";
 const REASON =
   "Instruction and memory files are protected. Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write.";
 
-// Always enforced, whatever the editable settings say; a test keeps .claude/settings.json a superset for native enforcement.
+// Always enforced, whatever the editable settings say; a test keeps .claude/settings.json a superset.
 export const CORE = [
   "Edit(**/AGENTS.md)",
   "Edit(**/CLAUDE.md)",
@@ -36,40 +36,20 @@ export function denyGlobs(rules: unknown[], root: string, home: string): string[
   });
 }
 
-// Like gitignore, ** crosses dot-folders too (.claude/CLAUDE.md); node's matchesGlob skips them.
-const segment = (part: string) =>
-  ({ "**/": "(?:.*/)?", "**": ".*", "*": "[^/]*" })[part] ?? part.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
-const toRegex = (glob: string) =>
-  new RegExp(
-    `^${glob
-      .split(/(\*\*\/|\*\*|\*)/)
-      .map(segment)
-      .join("")}$`,
-  );
-
-// A target matches when it is a protected path or, for a shell write or Delete, a folder above one, wildcards
-// included: rm -rf .claude/rules, ~/.claude, or ~/.claude/projects/p (which holds p/memory). Above a ** it can't tell.
-export function matches(path: string, glob: string, removes = false): boolean {
-  if (toRegex(glob).test(path)) return true;
-  if (!removes) return false;
-  const parts = path.split("/");
-  const globParts = glob.split("/");
-  const above = globParts.slice(0, parts.length);
-  return (
-    parts.length < globParts.length &&
-    !above.includes("**") &&
-    parts.every((part, i) => toRegex(above[i] ?? "").test(part))
-  );
+// Like gitignore, ** crosses dot-folders (.claude/CLAUDE.md); node's matchesGlob skips them.
+export function matches(path: string, glob: string): boolean {
+  const pattern = glob
+    .split(/(\*\*\/|\*\*|\*)/)
+    .map(
+      (part) => ({ "**/": "(?:.*/)?", "**": ".*", "*": "[^/]*" })[part] ?? part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"),
+    )
+    .join("");
+  return new RegExp(`^${pattern}$`).test(path);
 }
 
-// Shell writes, for every agent: a write command that mentions a protected path, or a folder above or holding one,
-// anywhere in its arguments is blocked, option values included (-t DIR, -tDIR, --x=DIR, of=FILE). Broad on purpose:
-// parsing each command's option syntax never ended (#107); a rare false block, like cp AGENTS.md /tmp, is the cost.
-function shellMentions(command: string): string[] {
-  // A cd earlier in the chain moves where later relative paths land: cd .claude && touch rules/x.md.
-  let dir = "";
-  const here = (path: string) => (!path || /^[/~$]/.test(path) ? path : join(dir || ".", path));
-  // 2>&1 duplicates a stream, it writes no file; left in, the split at & would leave an empty redirect target.
+// Codex's plain shell writes: redirect targets and the operands of the usual file writers.
+function shellTargets(command: string): string[] {
+  // 2>&1 duplicates a stream and writes no file; left in, the split at & would leave an empty redirect target.
   return command
     .replace(/\d*>&\d+/g, " ")
     .split(/[;&|\n]+/)
@@ -77,56 +57,32 @@ function shellMentions(command: string): string[] {
       const tokens = (statement.match(/"(?:\\.|[^"\\])*"|'[^']*'|>>?|[^\s<>]+/g) ?? []).map((token) =>
         token.replace(/^(['"])(.*)\1$/, "$2"),
       );
-      if (tokens[0] === "cd") {
-        const to = tokens[1] ?? "~";
-        dir = /^[/~$]/.test(to) ? to : join(dir || ".", to);
-        return [];
-      }
-      const redirects = tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [tokens[i + 1] ?? ""] : []));
-      // By name or by path: rm and /bin/rm alike.
-      const writes =
-        tokens.some((token) => /(?:^|\/)(?:tee|cp|mv|rm|rmdir|unlink|install|truncate|touch|ln|dd)$/.test(token)) ||
-        (tokens.some((token) => /(?:^|\/)sed$/.test(token)) && tokens.some((token) => /^-i/.test(token)));
-      const mentioned = writes
-        ? tokens.flatMap((token) => [token, token.replace(/^-*[\w-]*=/, ""), token.replace(/^-[A-Za-z]/, "")])
-        : redirects;
-      return mentioned.map(here);
+      const writer = tokens.findIndex(
+        (token) => /^(?:tee|cp|mv|rm|touch)$/.test(token) || (token === "sed" && tokens.some((t) => /^-i/.test(t))),
+      );
+      const operands = writer >= 0 ? tokens.slice(writer + 1).filter((token) => !token.startsWith("-")) : [];
+      return [
+        // cp writes only its destination; mv also removes its sources.
+        ...(tokens[writer] === "cp" ? operands.slice(-1) : operands),
+        ...tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [tokens[i + 1] ?? ""] : [])),
+      ];
     });
-}
-
-// A folder a write command mentions takes the tracked files inside it, such as wiki/AGENTS.md.
-function tracked(path: string): string[] {
-  try {
-    if (!statSync(path).isDirectory()) return [];
-    const files = execFileSync("git", ["-C", path, "ls-files", "-z"], { encoding: "utf8", stdio: "pipe" });
-    return files
-      .split("\0")
-      .filter(Boolean)
-      .map((file) => join(path, file));
-  } catch {
-    return [];
-  }
 }
 
 export function protectedPaths(tool: string, toolInput: unknown, cwd: string, globs: string[], home: string): string[] {
   const input = (typeof toolInput === "string" ? { input: toolInput } : (toolInput ?? {})) as Record<string, unknown>;
   const text = [input.command, input.cmd, input.input].filter((value) => typeof value === "string").join("\n");
-  const targets = /Bash|exec_command|shell/i.test(tool)
-    ? shellMentions(text)
-        .filter(Boolean)
-        .map((path) => ({ path, removes: true }))
+  const paths = /Bash|exec_command|shell/i.test(tool)
+    ? shellTargets(text)
     : [
         ...editedPaths(toolInput),
         ...(Array.isArray(input.edits) ? input.edits : []).flatMap((edit) => editedPaths(edit)),
         ...[...text.matchAll(/^\*\*\* (?:Delete File|Move to): (.+)$/gm)].map((match) => match[1]?.trim() ?? ""),
-      ].map((path) => ({ path, removes: tool === "Delete" }));
-  return targets
-    .flatMap(({ path, removes }) => {
-      const full = resolve(cwd, path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/)/, home));
-      return (removes ? [full, ...tracked(full)] : [full]).map((target) => ({ target, removes }));
-    })
-    .filter(({ target, removes }) => globs.some((glob) => matches(target, glob, removes)))
-    .map(({ target }) => target);
+      ];
+  return paths
+    .filter(Boolean)
+    .map((path) => resolve(cwd, path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/)/, home)))
+    .filter((path) => globs.some((glob) => matches(path, glob)));
 }
 
 if (import.meta.main) {
@@ -144,18 +100,6 @@ if (import.meta.main) {
   } catch {
     // Outside a repo, cwd is the only anchor.
   }
-  const raw = (input as { tool_name?: unknown }).tool_name;
-  const tool = typeof raw === "string" ? raw : "";
-  const deny = (reason: string) =>
-    console.log(
-      JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          permissionDecision: "deny",
-          permissionDecisionReason: reason,
-        },
-      }),
-    );
   let extra: unknown = [];
   try {
     extra = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8")).permissions?.deny;
@@ -163,5 +107,15 @@ if (import.meta.main) {
     // Unreadable settings leave the built-in list in force.
   }
   const globs = denyGlobs([...CORE, ...(Array.isArray(extra) ? extra : [])], root, homedir());
-  if (protectedPaths(tool, input.tool_input, cwd, globs, homedir()).length) deny(REASON);
+  const tool = (input as { tool_name?: unknown }).tool_name;
+  if (protectedPaths(typeof tool === "string" ? tool : "", input.tool_input, cwd, globs, homedir()).length)
+    console.log(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: REASON,
+        },
+      }),
+    );
 }

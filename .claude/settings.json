@@ -50,7 +50,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit|Delete|Bash",
+        "matcher": "Write|Edit|MultiEdit|Delete",
         "hooks": [
           {
             "type": "command",
