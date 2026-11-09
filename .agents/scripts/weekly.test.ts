@@ -65,10 +65,11 @@ test("weekly command returns explicit empty collections and record-backed prepar
         (1, 1, 'practice', '2026-11-02 00:00 America/Chicago'),
         (2, 1, 'game', '2026-11-08 23:59 America/Chicago'),
         (3, 1, 'practice', '2026-11-09 00:00 America/Chicago'),
-        (4, 1, 'cancelled', '2026-11-03 12:00 America/Chicago'),
         (5, 1, 'practice', '2026-11-01 23:59 America/Chicago'),
         (6, 1, 'practice', '2026-11-01 01:30-05'),
         (7, 1, 'practice', '2026-11-01 01:30-06');
+      insert into events (id, activity_id, kind, starts_at, cancelled) values
+        (4, 1, 'practice', '2026-11-03 12:00 America/Chicago', true);
       insert into obligations (id, name, kind, cadence, due_day) values
         (1, 'Fixture bill', 'bill', 'monthly', 2),
         (2, 'Fixture paid', 'bill', 'monthly', 3),
