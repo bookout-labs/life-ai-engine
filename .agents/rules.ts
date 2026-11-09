@@ -111,6 +111,17 @@ export const RULES: Rule[] = [
     context: ".claude/skills/wiki/SKILL.md",
   },
   {
+    id: "orchestrator-registration",
+    rule: "Persist coordinator opt-in from the first native UserPromptSubmit prompt per provider session. Later prompts and workers cannot opt in.",
+    trigger: "first native user prompt",
+    route: {
+      kind: "hook",
+      file: ".agents/hooks/orchestrator-rotation.ts",
+      event: "UserPromptSubmit",
+      tools: { claude: [], codex: [] },
+    },
+  },
+  {
     id: "orchestrator-rotation",
     rule: "Only first-prompt opted-in orchestrators receive rotation instructions. Save private handoffs through pages.ts, recover active jobs without restarting them, and launch successors only with current user/session authority. Leave pins and retiring threads unchanged.",
     trigger: "coordinator stop",
@@ -123,7 +134,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "orchestrator-compaction",
-    rule: "Guard automatic coordinator compaction once per provider session; manual compaction and workers remain unaffected. Model-specific proactive thresholds require explicit configuration.",
+    rule: "Preserve automatic coordinator compaction with Claude summary instructions or a validated private Codex store snapshot. Manual compaction and workers remain unaffected. Model-specific proactive thresholds require explicit configuration.",
     trigger: "automatic coordinator compaction",
     route: {
       kind: "hook",

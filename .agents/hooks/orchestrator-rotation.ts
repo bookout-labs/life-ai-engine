@@ -1,16 +1,19 @@
-import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 const marker = "Life-AI-Session-Role: orchestrator";
 const eventSchema = z.object({
-  hook_event_name: z.enum(["Stop", "PreCompact"]),
+  hook_event_name: z.enum(["UserPromptSubmit", "Stop", "PreCompact"]),
   session_id: z.string().min(1),
-  transcript_path: z.string().min(1),
-  agent_id: z.string().nullish(),
+  transcript_path: z.string().min(1).nullish(),
+  prompt: z.string().optional(),
+  agent_id: z.string().min(1).nullish(),
   trigger: z.string().optional(),
 });
 const usageSchema = z.object({
@@ -54,49 +57,95 @@ Include the retiring T3 thread id and ${marker} in any authorized successor prom
 Neither seat may archive the retiring thread. Leave pins unchanged without explicit
 prior authority. Post an authorized successor's returned link, then stop this seat.`;
 
-function snapshot(path: string, session: string, provider: "claude" | "codex") {
-  let firstPrompt: string | undefined;
+function latestUsage(path: string, session: string) {
   let latest: unknown;
-  let codexSession: string | undefined;
   for (const line of readFileSync(path, "utf8").split("\n")) {
     if (!line.trim()) continue;
     const row = rowSchema.parse(JSON.parse(line));
     if (row.sessionId !== undefined && row.sessionId !== session) continue;
     if (row.isSidechain) continue;
-    if (provider === "codex") {
-      if (row.type === "session_meta") codexSession = row.payload?.id;
-      if (row.type === "event_msg" && row.payload?.type === "user_message" && firstPrompt === undefined)
-        firstPrompt = row.payload.message ?? "";
-    } else {
-      if (row.type === "user" && !row.isMeta && firstPrompt === undefined) {
-        const content = row.message?.content;
-        firstPrompt =
-          typeof content === "string"
-            ? content
-            : (content
-                ?.filter((b) => b.type === "text")
-                .map((b) => b.text ?? "")
-                .join("\n") ?? "");
-      }
-      if (row.type === "assistant") latest = row.message?.usage;
-    }
+    if (row.type === "assistant") latest = row.message?.usage;
   }
-  if (provider === "codex" && codexSession !== session) return undefined;
-  if (!firstPrompt?.split(/\r?\n/).includes(marker)) return undefined;
-  if (latest === undefined) return { tokens: 0 };
+  if (latest === undefined) return 0;
   const usage = usageSchema.parse(latest);
-  return { tokens: usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens };
+  return usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens;
+}
+
+const checkpointSchema = z.object({
+  schema: z.literal("orchestrator-store-snapshot/v1"),
+  programStore: z.string(),
+  files: z
+    .object({
+      "preferences.md": z.string().min(1),
+      "agents.json": z.string().min(1),
+      "current-handoff-input.json": z.string().min(1),
+      "current-handoff-slug.txt": z.string().regex(/^handoff\/[^\s]+\s*$/),
+    })
+    .catchall(z.string()),
+});
+
+function validateCheckpoint(input: unknown) {
+  const snapshot = checkpointSchema.parse(input);
+  z.record(z.string(), z.object({ taskId: z.string().min(1) }).passthrough()).parse(
+    JSON.parse(snapshot.files["agents.json"]),
+  );
+  const validation = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("../scripts/handoff.ts", import.meta.url)), "validate"],
+    {
+      input: snapshot.files["current-handoff-input.json"],
+      encoding: "utf8",
+      maxBuffer: 4096,
+    },
+  );
+  if (validation.status !== 0) throw new Error("Stored handoff failed validation");
+  return snapshot;
+}
+
+function checkpoint(directory: string) {
+  const programStore = join(homedir(), ".life-ai", "orchestrate", "life-ai-builds");
+  let bytes = 0;
+  const files: Record<string, string> = {};
+  for (const entry of readdirSync(programStore, { recursive: true, withFileTypes: true })) {
+    if (entry.isSymbolicLink()) throw new Error("Store checkpoint cannot follow symbolic links");
+    if (!entry.isFile()) continue;
+    const source = join(entry.parentPath, entry.name);
+    const data = readFileSync(source);
+    bytes += data.length;
+    if (data.length > 8 * 1024 * 1024 || bytes > 32 * 1024 * 1024) throw new Error("Store exceeds checkpoint limit");
+    const text = data.toString("utf8");
+    if (!Buffer.from(text).equals(data)) throw new Error("Store checkpoint requires lossless UTF-8 files");
+    files[relative(programStore, source)] = text;
+  }
+  const body = JSON.stringify(validateCheckpoint({ schema: "orchestrator-store-snapshot/v1", programStore, files }));
+  const sha256 = createHash("sha256").update(body).digest("hex");
+  const path = join(directory, `${sha256}.json`);
+  const temporary = join(directory, `${randomUUID()}.tmp`);
+  writeFileSync(temporary, body, { flag: "wx", mode: 0o600, flush: true });
+  renameSync(temporary, path);
+  chmodSync(path, 0o600);
+  if (readFileSync(path, "utf8") !== body) throw new Error("Checkpoint readback differs");
+  return path;
+}
+
+function recovery(path: string) {
+  const text = `Private store snapshot: ${path}.
+Restore through bounded capture with pipefail enabled:
+node .agents/hooks/orchestrator-rotation.ts read-checkpoint '${path}' --full | node .agents/scripts/handoff.ts capture.
+If capture returns a private receipt, inspect only the sections needed for recovery.
+This preserves the program store, preferences standing orders, current recovery slug,
+all stored task ids and reporting destinations. It is NOT live T3 status.
+Reconcile known completion events with the coordinator. Never restart jobs from stored running status.
+Preserve EVERY task id, report destination, standing-order reference and current recovery slug
+known in this conversation in the summary, including updates absent from the store.
+No launch, archive or pin authority is granted. Read docs/orchestrator-handoff.md.`;
+  if (Buffer.byteLength(text) > 2000) throw new Error("Recovery instructions exceed header bound");
+  return text;
 }
 
 function decide(input: unknown, provider: "claude" | "codex") {
   const event = eventSchema.parse(input);
   if (event.agent_id || (event.hook_event_name === "PreCompact" && event.trigger !== "auto")) return;
-  const current = snapshot(event.transcript_path, event.session_id, provider);
-  if (!current) return;
-  const threshold =
-    process.env.LIFE_AI_ROTATION_TOKENS === undefined
-      ? undefined
-      : z.coerce.number().int().positive().parse(process.env.LIFE_AI_ROTATION_TOKENS);
   const directory = join(homedir(), ".life-ai", "orchestrator-rotation");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
@@ -107,19 +156,63 @@ function decide(input: unknown, provider: "claude" | "codex") {
   const db = new DatabaseSync(path);
   try {
     chmodSync(path, 0o600);
-    db.exec("PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS claims (event TEXT PRIMARY KEY); BEGIN IMMEDIATE");
-    const compact = event.hook_event_name === "PreCompact";
-    const guarded = Boolean(db.prepare("SELECT event FROM claims WHERE event='PreCompact'").get());
-    if (!compact && !guarded && (provider === "codex" || threshold === undefined || current.tokens < threshold)) {
-      db.exec("ROLLBACK");
+    db.exec(
+      "PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS claims (event TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS registration (id INTEGER PRIMARY KEY CHECK(id=1), opted INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS preservation (id INTEGER PRIMARY KEY CHECK(id=1), path TEXT NOT NULL); BEGIN IMMEDIATE",
+    );
+    if (event.hook_event_name === "UserPromptSubmit") {
+      const prompt = z.string().parse(event.prompt);
+      db.prepare("INSERT OR IGNORE INTO registration(id,opted) VALUES (1,?)").run(
+        Number(prompt.split(/\r?\n/).includes(marker)),
+      );
+      db.exec("COMMIT");
+      const saved = db.prepare("SELECT path FROM preservation WHERE id=1").get();
+      if (saved) return recovery(z.string().parse(saved.path));
       return;
     }
-    const result = db.prepare("INSERT OR IGNORE INTO claims(event) VALUES (?)").run(event.hook_event_name);
+    // A session first seen after prompt submission cannot opt in later.
+    db.prepare("INSERT OR IGNORE INTO registration(id,opted) VALUES (1,0)").run();
+    const opted = db.prepare("SELECT opted FROM registration WHERE id=1").get();
+    if (opted?.opted !== 1) {
+      db.exec("COMMIT");
+      return;
+    }
+    const compact = event.hook_event_name === "PreCompact";
+    if (compact) {
+      if (provider === "claude") {
+        db.prepare("INSERT OR IGNORE INTO claims(event) VALUES ('PreCompact')").run();
+        db.exec("COMMIT");
+        return `Preserve private program store ~/.life-ai/orchestrate/life-ai-builds and its preferences.md standing orders,
+current-handoff-slug.txt recovery slug, and EVERY known active task id, reporting destination
+and report path in the summary. Include current conversation updates and current handoff slug.
+The store agents.json contains dispatch snapshots, NOT live task status.
+Restore the standing orders and recovery packet before acting. Reconcile completion events with
+the coordinator. Never restart existing jobs. No launch, archive or pin authority is granted.
+Read docs/orchestrator-handoff.md. Preserve private references without exposing their contents.`;
+      }
+      const saved = checkpoint(directory);
+      db.prepare("INSERT OR REPLACE INTO preservation(id,path) VALUES (1,?)").run(saved);
+      db.prepare("INSERT OR IGNORE INTO claims(event) VALUES ('PreCompact')").run();
+      db.exec("COMMIT");
+      return { continue: true, systemMessage: recovery(saved) };
+    }
+    const tokens =
+      provider === "claude" && event.transcript_path ? latestUsage(event.transcript_path, event.session_id) : 0;
+    const guarded = Boolean(db.prepare("SELECT event FROM claims WHERE event='PreCompact'").get());
+    if (!guarded) {
+      const threshold =
+        process.env.LIFE_AI_ROTATION_TOKENS === undefined
+          ? undefined
+          : z.coerce.number().int().positive().parse(process.env.LIFE_AI_ROTATION_TOKENS);
+      if (provider === "codex" || threshold === undefined || !event.transcript_path || tokens < threshold) {
+        db.exec("COMMIT");
+        return;
+      }
+    }
+    const result = db.prepare("INSERT OR IGNORE INTO claims(event) VALUES ('Stop')").run();
+    const saved = db.prepare("SELECT path FROM preservation WHERE id=1").get();
     db.exec("COMMIT");
     if (!result.changes) return;
-    return provider === "codex" && compact
-      ? { continue: false, stopReason: handoff }
-      : { decision: "block", reason: handoff };
+    return { decision: "block", reason: saved ? `${recovery(z.string().parse(saved.path))}\n${handoff}` : handoff };
   } finally {
     db.close();
   }
@@ -127,10 +220,23 @@ function decide(input: unknown, provider: "claude" | "codex") {
 
 if (import.meta.main) {
   try {
+    if (process.argv[2] === "read-checkpoint") {
+      const path = z.string().parse(process.argv[3]);
+      const body = readFileSync(path, "utf8");
+      const snapshot = validateCheckpoint(JSON.parse(body));
+      if (!path.endsWith(`${createHash("sha256").update(body).digest("hex")}.json`))
+        throw new Error("Checkpoint checksum differs");
+      process.stdout.write(process.argv.includes("--full") ? JSON.stringify(snapshot) : recovery(path));
+      process.exit(0);
+    }
     const provider = z.enum(["claude", "codex"]).parse(process.argv[2]);
     const result = decide(JSON.parse(readFileSync(0, "utf8")), provider);
-    if (result) process.stdout.write(JSON.stringify(result));
+    if (result) process.stdout.write(typeof result === "string" ? result : JSON.stringify(result));
   } catch {
-    // Hooks fail open. Handoff and capture commands fail visibly instead.
+    if (process.argv[2] === "read-checkpoint") {
+      process.stderr.write("Checkpoint recovery failed validation.\n");
+      process.exitCode = 1;
+    }
+    // Native hooks fail open. Recovery commands fail visibly.
   }
 }

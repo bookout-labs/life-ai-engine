@@ -3,6 +3,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, readSync, unlinkSync, wri
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { pageRead, pageWrite } from "../../packages/core/pages.ts";
 import { runPages } from "./pages.ts";
 
 const text = z.string().min(1);
@@ -33,6 +34,22 @@ function render(input: unknown) {
   if (new Set(packet.jobs.map((job) => job.taskId)).size !== packet.jobs.length)
     throw new Error("Duplicate task ids in handoff");
   return { header, body: `${header}\n${JSON.stringify(packet)}` };
+}
+
+export async function writeHandoff(db: Parameters<typeof pageWrite>[0], slug: string, input: unknown) {
+  if (!slug.startsWith("handoff/")) throw new Error("Use a unique handoff/ slug");
+  const { body } = render(input);
+  await pageWrite(db, {
+    slug,
+    body,
+    type: "project",
+    expected_revision: null,
+    agent: process.env.CODEX_THREAD_ID ? "codex" : "terminal",
+    session: process.env.CODEX_THREAD_ID ?? "terminal",
+  });
+  const saved = (await pageRead(db, slug))?.body;
+  if (saved !== body) throw new Error("Handoff readback differs");
+  return { slug, bytes: Buffer.byteLength(saved), sha256: createHash("sha256").update(saved).digest("hex") };
 }
 
 function capture() {
@@ -81,18 +98,8 @@ if (import.meta.main) {
       const { db } = await import("./db.ts");
       try {
         if (command === "write") {
-          const { Readable } = await import("node:stream");
-          const { body } = render(JSON.parse(readFileSync(0, "utf8")));
-          await runPages(db, ["write", slug, "--type", "project"], homedir(), Readable.from([body]));
-          const saved = await runPages(db, ["read", slug]);
-          if (saved !== body) throw new Error("Handoff readback differs");
-          process.stdout.write(
-            JSON.stringify({
-              slug,
-              bytes: Buffer.byteLength(saved),
-              sha256: createHash("sha256").update(saved).digest("hex"),
-            }),
-          );
+          const receipt = await writeHandoff(db, slug, JSON.parse(readFileSync(0, "utf8")));
+          process.stdout.write(JSON.stringify(receipt));
         } else {
           const saved = await runPages(db, ["read", slug]);
           const separator = saved.indexOf("\n\n");
