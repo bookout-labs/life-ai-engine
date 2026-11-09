@@ -64,6 +64,33 @@ test("pinned gitleaks scans additions with private exact exceptions and safe dia
     assert.equal(run(base, removed).status, 1, "addition remains refused after later removal");
     const normal = commit(`changed\n${["pkg", "1.2.3"].join("@")}\n`);
     assert.equal(run(removed, normal).status, 0);
+    const beforeMerge = git("rev-parse", "HEAD");
+    git("switch", "-c", "merge-source");
+    commit("source change\n");
+    git("switch", "-c", "merge-target", beforeMerge);
+    git("merge", "--no-ff", "--no-commit", "merge-source");
+    writeFileSync(join(dir, "merge-only.txt"), `${value}\n`);
+    git("add", "merge-only.txt");
+    git("commit", "-qm", "synthetic merge fixture");
+    const mergeFinding = run(beforeMerge, git("rev-parse", "HEAD"));
+    assert.equal(mergeFinding.status, 1, "merge-only additions must be scanned");
+    assert.match(mergeFinding.stdout, /merge-only.txt.*:1/);
+    assert.ok(!(mergeFinding.stdout + mergeFinding.stderr).includes(value));
+
+    git("switch", "-c", "accepted-main", beforeMerge);
+    const acceptedMain = commit(`${value}\n`);
+    git("switch", "-c", "clean-merge-target", beforeMerge);
+    writeFileSync(join(dir, "feature-note.txt"), "ordinary feature\n");
+    git("add", "feature-note.txt");
+    git("commit", "-qm", "synthetic feature fixture");
+    git("merge", "--no-ff", "-m", "accepted main merge", "accepted-main");
+    assert.equal(
+      run(acceptedMain, git("rev-parse", "HEAD")).status,
+      0,
+      "clean merges do not rescan accepted main content",
+    );
+    git("switch", "merge-source");
+
     for (const text of [
       ["000", "12", "3456"].join(" "),
       ["000", "12", "3456"].join(""),
@@ -78,6 +105,30 @@ test("pinned gitleaks scans additions with private exact exceptions and safe dia
       assert.equal(result.status, 1, "personal-data shape refused");
       assert.ok(!(result.stdout + result.stderr).includes(text));
       assert.equal(run(before, after, JSON.stringify([text])).status, 0);
+    }
+    const email = ["fixture", "example.invalid"].join("@");
+    const international = ["fixture", "example.xn--p1ai"].join("@");
+    for (const [line, approved] of [
+      [`const address = '${email}';`, email],
+      [`Read \`${email}\`.`, email],
+      [`https://host.invalid/u?email=${email}`, email],
+      [international, international],
+    ] as const) {
+      const before = git("rev-parse", "HEAD");
+      const after = commit(`context\n${line}\n`);
+      assert.equal(run(before, after).status, 1, "email context remains refused without an exception");
+      assert.equal(
+        run(before, after, JSON.stringify([approved])).status,
+        0,
+        "the complete email is the exact exception",
+      );
+      assert.ok(!run(before, after).stdout.includes(approved));
+      if (approved === international)
+        assert.equal(
+          run(before, after, JSON.stringify([international.replace("--p1ai", "")])).status,
+          1,
+          "a truncated exception cannot admit the full address",
+        );
     }
     const beforeBypass = git("rev-parse", "HEAD");
     const afterBypass = commit(`${value} # gitleaks:allow\n`);
