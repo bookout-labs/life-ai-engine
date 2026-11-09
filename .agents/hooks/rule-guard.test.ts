@@ -57,4 +57,9 @@ await test("hook emits the platform denial protocol with repair instructions", (
   assert.equal(output.permissionDecision, "deny");
   assert.match(output.permissionDecisionReason, /entry in \.agents\/rules\.ts with trigger and a hook or check route/);
   assert.equal(run("notes.md").stdout, "");
+  const garbled = spawnSync(process.execPath, [".agents/hooks/rule-guard.ts"], {
+    input: "{not json",
+    encoding: "utf8",
+  });
+  assert.match(garbled.stdout, /"permissionDecision":"deny"/);
 });

@@ -25,8 +25,13 @@ export function denies(toolInput: unknown, cwd: string, home = homedir()): strin
 }
 
 if (import.meta.main) {
-  const input = readHookInput();
-  const reason = denies(input.tool_input, input.cwd ?? process.cwd());
+  let reason: string | undefined;
+  try {
+    const input = readHookInput(true);
+    reason = denies(input.tool_input, input.cwd ?? process.cwd());
+  } catch {
+    reason = `Cannot inspect this edit. ${REASON}`;
+  }
   if (reason)
     console.log(
       JSON.stringify({
