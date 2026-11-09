@@ -79,6 +79,18 @@ export async function pageWrite(db: Db, input: z.input<typeof pageWriteSchema>):
     const current = await pageRead(client, p.slug);
     if (p.expected_revision !== undefined && (current?.revision ?? null) !== p.expected_revision)
       throw new Error("Page changed since checkout");
+    // A save that changes nothing writes nothing, so history and the revision token only move on real edits.
+    if (
+      current &&
+      current.body === p.body &&
+      (p.type ?? current.type) === current.type &&
+      (p.title ?? current.title) === current.title &&
+      (p.summary ?? current.summary) === current.summary &&
+      (p.tags ?? current.tags).join("\0") === current.tags.join("\0")
+    ) {
+      await client.query("commit");
+      return current;
+    }
     const { rows } = await client.query<{ id: string }>(
       `insert into pages(slug,body,type,title,summary,tags,created_on)
       values($1,$2,$3,$4,$5,$6,coalesce($7::date,current_date)) on conflict(slug) do update set
@@ -98,16 +110,14 @@ export async function pageWrite(db: Db, input: z.input<typeof pageWriteSchema>):
         p.tags ?? null,
       ],
     );
-    // A save that leaves the body as it was adds no revision.
-    if (current?.body !== p.body)
-      await client.query(`insert into page_revisions(page_id,body,kind,agent,session,work) values($1,$2,$3,$4,$5,$6)`, [
-        rows[0]?.id,
-        p.body,
-        p.kind,
-        p.agent,
-        p.session,
-        p.work,
-      ]);
+    await client.query(`insert into page_revisions(page_id,body,kind,agent,session,work) values($1,$2,$3,$4,$5,$6)`, [
+      rows[0]?.id,
+      p.body,
+      p.kind,
+      p.agent,
+      p.session,
+      p.work,
+    ]);
     const result = await pageRead(client, p.slug);
     if (!result) throw new Error("Page write failed");
     await client.query("commit");
