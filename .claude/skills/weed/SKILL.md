@@ -1,40 +1,100 @@
 ---
 name: weed
-description: Weed one script or hook down to what Life AI must own. Use when Joe names a script to weed, trim, audit or reduce, or asks which parts a platform already does better.
+description: Weed one script, hook or workflow down to what Life AI must own. Use when Joe names a script to weed, trim, audit or reduce, asks which parts a platform already does better, or asks what is left to weed.
 ---
 
 Weeding takes one script per run, in stages, and each stage ends at Joe. Joe decides; the run builds nothing until he has chosen. The final form is the frame: one public engine repo, every thread in its own T3 worktree, personal data in Neon and R2.
 
-## 1. Inventory
+The ledger is the Builds board: one issue per script, titled `Weed <path>`. It holds the snapshot verdicts, Joe's decisions and the result. Read every closed `Weed` issue before starting a run, so a job already moved to a platform in an earlier run is recognized here as duplicate.
 
-Read the script end to end, plus everything it imports and calls. Split it into pieces: contiguous line ranges that each do one job.
+## 0. Queue, when Joe asks what is left
 
-Done when every line belongs to exactly one piece, and each piece has a line range and one plain sentence saying what it does.
+List every script under `.agents/`, every hook wired in `.claude/settings.json` and `.codex/hooks.json`, and every workflow, with line counts, test line counts and `Weed` status. Show it as a table.
 
-## 2. Platform check
+Done when every file is in the table.
 
-For each piece, find whether T3 Code, GitHub (Actions, rulesets, auto-merge, Projects), the Claude Code or Codex harness, Cloudflare, Neon, git itself or a maintained open-source tool already does that job. Use current primary docs and the `lab` skill's research order. Cite each source and mark every claim confirmed or unverified.
+## 1. Whole script
 
-Done when every piece has a verdict of Keep, Platform (naming the feature), Delete, or Joe's call, and every Platform verdict has a cited source.
+Find every caller: hooks config, workflows, package.json scripts, the rules registry, other scripts and skills. Measure how often it runs and how long one run takes. For hooks, the cost per call matters most, because it is paid on every matching tool call. Ask whether the whole script can go. Open its `Weed` issue.
 
-## 3. Counter-case
+Done when the issue records the callers, frequency, run time and a whole-script verdict.
 
-For every piece marked Platform or Delete, argue for keeping it. Does the local version save tokens (a blocking wait costs none; a wake-up costs a turn), wall-clock time (fails before a push or CI round trip), safety, or control (structured output, deterministic blocking)? Flip a verdict when the local version wins, and say what it wins on.
+## 2. Inventory
 
-Done when each Platform or Delete verdict carries a one-line answer to "what would we lose?"
+Read the script end to end, plus everything it imports and its tests. Split it into pieces: contiguous line ranges that each do one job. For each piece, name the real failure it prevents, citing the PR, issue or incident from git log and the board. A piece with no failure behind it is speculative machinery.
 
-## 4. Snapshot
+Done when every line belongs to exactly one piece, and each piece has a line range, one plain sentence, and a cited failure or "none found".
 
-Write a page into the scratchpad: title, line count, and a bar splitting lines into Platform, Keep and Joe's call. Add one card per piece (number, name, lines, what it does, a verdict tag, one-sentence reason), a "where it would land" table, and anything unavailable with the reason. Show it with `html_render`, using T3 theme variables. Reply with only what the page doesn't say.
+## 3. Platform check
+
+For each piece, find whether one of these already does the job:
+- T3 Code;
+- GitHub (Actions, rulesets, auto-merge, merge queue, Projects);
+- the Claude Code or Codex harness;
+- Cloudflare;
+- Neon;
+- git itself;
+- a maintained open-source package;
+- existing code elsewhere in this repo.
+
+Use current primary docs and the `lab` skill's research order. Cite each source and mark every claim confirmed or unverified.
+
+Done when every piece has a verdict of Keep, Platform (naming the feature), Reuse (naming the file), Delete, or Joe's call, and every Platform or Reuse verdict has its citation.
+
+## 4. Counter-case
+
+For every piece marked Platform, Reuse or Delete, argue for keeping it. Ask whether the local version:
+- saves tokens (a blocking wait costs none; a wake-up costs a turn);
+- saves wall-clock time (it fails before a push or CI round trip);
+- adds safety;
+- gives control (structured output, deterministic blocking).
+
+Flip the verdict when the local version wins, and say what it wins on.
+
+Done when each Platform, Reuse or Delete verdict carries a one-line answer to "what would we lose?"
+
+## 5. Snapshot
+
+Copy `snapshot-example.html` from this folder into the scratchpad and replace its content, keeping the layout:
+- the line-split bar;
+- one card per piece;
+- the "where it would land" table;
+- the "not available" notes.
+
+Add the whole-script verdict and the run-time figures above the cards. Show it with `html_render`, post the verdict table on the `Weed` issue, and reply with only what the page doesn't say.
 
 Done when Joe has seen the page. Stop there and wait for his questions or decision.
 
-## 5. Redesign, when Joe asks
+## 6. Redesign, when Joe asks
 
-Brief an independent agent from the other model family, or Fable when Joe names it. Hand it the script, the snapshot and the final-form frame. Have it verify the snapshot's claims against primary sources and judge every piece again. It writes the redesign and draft files to the scratchpad, never the repo. Relay where it disagrees.
+Brief an independent agent from the other model family, or Fable when Joe names it. Hand it:
+- the script;
+- the snapshot;
+- the `Weed` issue;
+- the final-form frame.
+
+Have it verify the snapshot's claims against primary sources and judge every piece again. It writes the redesign and draft files to the scratchpad, never the repo. Relay where it disagrees.
 
 Done when Joe has the redesign, its open questions, and the line counts before and after.
 
-## 6. Build
+## 7. Build
 
-Open a board issue whose "Done means" names the production proof, then build through the normal save flow.
+Set the `Weed` issue's "Done means" to all of these:
+- tests still pass, apart from tests of deleted machinery;
+- lines and run time are lower, with both numbers posted;
+- the change is proven in production.
+
+Build through the normal save flow, and record Joe's decisions on the issue.
+
+## 8. Sharpen this skill
+
+List this run's hiccups. A hiccup is any of these:
+- Joe corrected a verdict or a claim;
+- a verdict flipped after the snapshot;
+- a stage was redone;
+- a stage's "Done when" was met while the work was still incomplete;
+- an instruction here sent the run the wrong way.
+
+A wording preference without a cost in this run is not a hiccup. For each hiccup, change the step or "Done when" that would have prevented it. Prefer sharpening or replacing a line over adding one, so the skill stays the same length unless a hiccup needs a new rule. Post the hiccups and the edit on the `Weed` issue, and save the skill change with it.
+
+Done when every hiccup has either an edit that prevents it or a one-line reason it needs none. A run with no hiccups leaves this file unchanged.
