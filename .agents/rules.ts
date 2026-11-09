@@ -2,7 +2,7 @@ type Route =
   | {
       kind: "hook";
       file: `.agents/${string}.ts`;
-      event: "SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop";
+      event: "SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop" | "PreCompact";
       // Tool names differ per agent; the check proves each config's matcher fires on these.
       tools: { claude: string[]; codex: string[] };
     }
@@ -109,6 +109,28 @@ export const RULES: Rule[] = [
     },
     inject: "~/.life-ai/pages/**/*.md",
     context: ".claude/skills/wiki/SKILL.md",
+  },
+  {
+    id: "orchestrator-rotation",
+    rule: "Only first-prompt opted-in orchestrators receive rotation instructions. Save private handoffs through pages.ts, recover active jobs without restarting them, and launch successors only with current user/session authority. Leave pins and retiring threads unchanged.",
+    trigger: "coordinator stop",
+    route: {
+      kind: "hook",
+      file: ".agents/hooks/orchestrator-rotation.ts",
+      event: "Stop",
+      tools: { claude: [], codex: [] },
+    },
+  },
+  {
+    id: "orchestrator-compaction",
+    rule: "Guard automatic coordinator compaction once per provider session; manual compaction and workers remain unaffected. Model-specific proactive thresholds require explicit configuration.",
+    trigger: "automatic coordinator compaction",
+    route: {
+      kind: "hook",
+      file: ".agents/hooks/orchestrator-rotation.ts",
+      event: "PreCompact",
+      tools: { claude: [], codex: [] },
+    },
   },
   {
     id: "codex-trust",
