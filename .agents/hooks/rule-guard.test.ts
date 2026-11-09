@@ -71,6 +71,8 @@ await test("deleting a protected folder or a folder that holds one is blocked", 
     `rm -rf ${home}/.claude/projects/p`,
     `rm -rf ${home}/.claude/projects`,
     "cp notes.md .claude/rules",
+    "cp -t .claude/rules notes.md",
+    `mv --target-directory=${home}/.claude/rules a.md b.md`,
     `mv notes.md ${home}/.claude/rules/`,
     `install -m 644 x.md ${home}/.claude/projects/p/memory`,
   ])

@@ -75,7 +75,12 @@ function shellTargets(command: string): { path: string; removes: boolean }[] {
         (token === "sed" && tokens.some((t) => /^-i/.test(t))),
     );
     const command = tokens[writer] ?? "";
-    const operands = writer >= 0 ? tokens.slice(writer + 1).filter((token) => !token.startsWith("-")) : [];
+    const args = writer >= 0 ? tokens.slice(writer + 1) : [];
+    // -t DIR / --target-directory=DIR names the destination up front; it then goes last like a plain destination.
+    const t = args.findIndex((arg) => arg === "-t" || arg === "--target-directory");
+    const target = t >= 0 ? args[t + 1] : args.find((arg) => arg.startsWith("--target-directory="))?.split("=")[1];
+    const plain = args.filter((arg, i) => !arg.startsWith("-") && !(t >= 0 && i === t + 1));
+    const operands = target ? [...plain, target] : plain;
     // mv removes its sources, not its destination; rm, rmdir and unlink remove every operand.
     const removed = (i: number) =>
       /^(?:rm|rmdir|unlink)$/.test(command) || (command === "mv" && i < operands.length - 1);
