@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { repoRoot } from "./changes.ts";
 import { editedPaths, readHookInput } from "./edits.ts";
 
@@ -79,8 +79,14 @@ function shellTargets(command: string): { path: string; removes: boolean }[] {
     // mv removes its sources, not its destination; rm, rmdir and unlink remove every operand.
     const removed = (i: number) =>
       /^(?:rm|rmdir|unlink)$/.test(command) || (command === "mv" && i < operands.length - 1);
+    // cp, mv, install and ln may write into a destination folder: dest/<source name>.
+    const dest = operands.at(-1) ?? "";
+    const into = /^(?:cp|mv|install|ln)$/.test(command)
+      ? operands.slice(0, -1).map((source) => ({ path: join(dest, basename(source)), removes: false }))
+      : [];
     return [
       ...operands.map((path, i) => ({ path, removes: removed(i) })),
+      ...into,
       ...tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [{ path: tokens[i + 1] ?? "", removes: false }] : [])),
     ];
   });

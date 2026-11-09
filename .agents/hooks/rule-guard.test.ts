@@ -70,6 +70,9 @@ await test("deleting a protected folder or a folder that holds one is blocked", 
     `mv ${home}/.codex /tmp/x`,
     `rm -rf ${home}/.claude/projects/p`,
     `rm -rf ${home}/.claude/projects`,
+    "cp notes.md .claude/rules",
+    `mv notes.md ${home}/.claude/rules/`,
+    `install -m 644 x.md ${home}/.claude/projects/p/memory`,
   ])
     assert.ok(blocked({ cmd: command }, root, "exec_command"), command);
   for (const command of [
