@@ -139,6 +139,27 @@ await test("missing origin/main approves nothing but still allows trusted hooks 
   assert.deepEqual(f.writes(), []);
 });
 
+await test("a malformed hook from another source cannot block trusted project hooks", (t) => {
+  const f = fixture(t);
+  f.set([
+    { ...f.entry, trustStatus: "trusted" },
+    { key: "plugin", enabled: true, trustStatus: "untrusted", sourcePath: "/plugin/hooks.json", currentHash: "" },
+  ]);
+  assert.equal(f.run(), "");
+  assert.deepEqual(f.writes(), []);
+});
+
+await test("missing worktree hooks allow trusted primary hooks with a warning and no trust write", (t) => {
+  const f = fixture(t);
+  rmSync(join(f.worktree, ".codex/hooks.json"));
+  f.set([{ ...f.entry, trustStatus: "trusted" }]);
+  const output = JSON.parse(f.run());
+  assert.equal(output.hookSpecificOutput.permissionDecision, undefined);
+  assert.match(output.systemMessage, /configuration differs/);
+  assert.equal(output.hookSpecificOutput.additionalContext, output.systemMessage);
+  assert.deepEqual(f.writes(), []);
+});
+
 await test("approves enabled hooks at the primary source for a matching linked worktree", (t) => {
   const f = fixture(t);
   f.set([f.entry, { ...f.entry, key: "foreign", sourcePath: "/other/.codex/hooks.json" }]);
