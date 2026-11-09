@@ -1,7 +1,8 @@
 // Claude and Grok enforce .claude/settings.json permissions.deny natively, shell writes included.
 // This hook applies its built-in list, plus any extra entries there, to file-edit tools for every agent and to shell writes for Codex.
 // Node built-ins only: a hook whose imports are missing fails open.
-import { readFileSync, realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { repoRoot } from "./changes.ts";
@@ -34,17 +35,17 @@ export function denyGlobs(rules: unknown[], root: string, home: string): string[
 }
 
 // Like gitignore, ** crosses dot-folders too (.claude/CLAUDE.md); node's matchesGlob skips them.
+// A target also matches when it is, or contains, a protected folder: rm -rf .claude/rules or ~/.claude.
 export function matches(path: string, glob: string): boolean {
+  const fixed = glob.slice(0, glob.search(/\*|$/)).replace(/\/[^/]*$/, "");
+  if (fixed === path || fixed.startsWith(`${path}/`)) return true;
   const pattern = glob
-    .split(/(\*\*\/|\*\*|\*)/)
-    .map((part) =>
-      part === "**/"
-        ? "(?:.*/)?"
-        : part === "**"
-          ? ".*"
-          : part === "*"
-            ? "[^/]*"
-            : part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"),
+    .replace(/\/\*\*$/, "\0")
+    .split(/(\0|\*\*\/|\*\*|\*)/)
+    .map(
+      (part) =>
+        ({ "\0": "(?:/.*)?", "**/": "(?:.*/)?", "**": ".*", "*": "[^/]*" })[part] ??
+        part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"),
     )
     .join("");
   return new RegExp(`^${pattern}$`).test(path);
@@ -68,6 +69,20 @@ function shellTargets(command: string): string[] {
   });
 }
 
+// A folder an rm or mv targets also takes the tracked files inside it, such as wiki/AGENTS.md.
+function tracked(path: string): string[] {
+  try {
+    if (!statSync(path).isDirectory()) return [];
+    const files = execFileSync("git", ["-C", path, "ls-files", "-z"], { encoding: "utf8", stdio: "pipe" });
+    return files
+      .split("\0")
+      .filter(Boolean)
+      .map((file) => join(path, file));
+  } catch {
+    return [];
+  }
+}
+
 export function protectedPaths(tool: string, toolInput: unknown, cwd: string, globs: string[], home: string): string[] {
   const input = (typeof toolInput === "string" ? { input: toolInput } : (toolInput ?? {})) as Record<string, unknown>;
   const text = [input.command, input.cmd, input.input].filter((value) => typeof value === "string").join("\n");
@@ -78,8 +93,10 @@ export function protectedPaths(tool: string, toolInput: unknown, cwd: string, gl
         ...(Array.isArray(input.edits) ? input.edits : []).flatMap((edit) => editedPaths(edit)),
         ...[...text.matchAll(/^\*\*\* (?:Delete File|Move to): (.+)$/gm)].map((match) => match[1]?.trim() ?? ""),
       ];
+  const shell = /Bash|exec_command|shell/i.test(tool);
   return paths
     .map((path) => resolve(cwd, path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/)/, home)))
+    .flatMap((path) => (shell ? [path, ...tracked(path)] : [path]))
     .filter((path) => globs.some((glob) => matches(path, glob)));
 }
 

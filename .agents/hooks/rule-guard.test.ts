@@ -61,6 +61,31 @@ for (const path of protectedFiles)
     }
   });
 
+await test("deleting a protected folder or a folder that holds one is blocked", () => {
+  for (const command of [
+    "rm -rf .claude/rules",
+    `rm -rf ${home}/.claude/rules`,
+    `rm -r ${home}/.claude/projects/p/memory`,
+    `rm -rf ${home}/.claude`,
+    `mv ${home}/.codex /tmp/x`,
+  ])
+    assert.ok(blocked({ cmd: command }, root, "exec_command"), command);
+  for (const command of ["rm -rf build", "rm -rf .claude/skills/old", `rm -rf ${home}/.claude/projects/p/cache`])
+    assert.equal(blocked({ cmd: command }, root, "exec_command"), false, command);
+});
+
+await test("deleting a folder that holds a tracked instruction file is blocked", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "rule-guard-tree-")));
+  spawnSync("git", ["-C", dir, "init", "-q"]);
+  mkdirSync(join(dir, "wiki"));
+  writeFileSync(join(dir, "wiki/AGENTS.md"), "x");
+  writeFileSync(join(dir, "wiki/page.md"), "x");
+  spawnSync("git", ["-C", dir, "add", "."]);
+  const local = denyGlobs(CORE, dir, home);
+  assert.ok(protectedPaths("exec_command", { cmd: "rm -rf wiki" }, dir, local, home).length);
+  assert.equal(protectedPaths("exec_command", { cmd: "rm wiki/page.md" }, dir, local, home).length, 0);
+});
+
 await test("shell reads and unrelated writes pass", () => {
   for (const command of [
     "cat AGENTS.md",
