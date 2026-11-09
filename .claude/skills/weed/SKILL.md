@@ -85,3 +85,16 @@ Set the `Weed` issue's "Done means" to all of these:
 - the change is proven in production.
 
 Build through the normal save flow, and record Joe's decisions on the issue.
+
+## 8. Sharpen this skill
+
+List this run's hiccups. A hiccup is any of these:
+- Joe corrected a verdict or a claim;
+- a verdict flipped after the snapshot;
+- a stage was redone;
+- a stage's "Done when" was met while the work was still incomplete;
+- an instruction here sent the run the wrong way.
+
+A wording preference without a cost in this run is not a hiccup. For each hiccup, change the step or "Done when" that would have prevented it. Prefer sharpening or replacing a line over adding one, so the skill stays the same length unless a hiccup needs a new rule. Post the hiccups and the edit on the `Weed` issue, and save the skill change with it.
+
+Done when every hiccup has either an edit that prevents it or a one-line reason it needs none. A run with no hiccups leaves this file unchanged.
