@@ -2,10 +2,14 @@ import { readFileSync } from "node:fs";
 
 export type HookInput = { session_id?: string; cwd?: string; tool_input?: unknown };
 
-export function readHookInput(): HookInput {
+export function readHookInput(strict = false): HookInput {
   try {
-    return JSON.parse(readFileSync(0, "utf8") || "{}");
-  } catch {
+    const input = JSON.parse(readFileSync(0, "utf8") || "{}");
+    if (strict && (input === null || typeof input !== "object" || Array.isArray(input)))
+      throw new Error("Invalid hook input");
+    return input;
+  } catch (error) {
+    if (strict) throw error;
     return {};
   }
 }

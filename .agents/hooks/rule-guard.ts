@@ -1,19 +1,23 @@
 import { homedir } from "node:os";
 import { relative, resolve } from "node:path";
-import { z } from "zod";
 import { repoRoot } from "./changes.ts";
 import { editedPaths, readHookInput } from "./edits.ts";
+import { array, optionalString, record } from "./parse.ts";
 
-const inputSchema = z
-  .object({
-    file_path: z.string().optional(),
-    path: z.string().optional(),
-    command: z.string().optional(),
-    cmd: z.string().optional(),
-    input: z.string().optional(),
-    edits: z.array(z.object({ file_path: z.string().optional(), path: z.string().optional() })).optional(),
-  })
-  .passthrough();
+function parseInput(raw: unknown) {
+  const input = record(typeof raw === "string" ? { input: raw } : (raw ?? {}));
+  const paths = (value: unknown) => {
+    const item = record(value);
+    return { file_path: optionalString(item.file_path), path: optionalString(item.path) };
+  };
+  return {
+    ...paths(input),
+    command: optionalString(input.command),
+    cmd: optionalString(input.cmd),
+    input: optionalString(input.input),
+    edits: input.edits === undefined ? [] : array(input.edits).map(paths),
+  };
+}
 const ADD_RULE =
   "Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write.";
 
@@ -41,10 +45,12 @@ export function decision(
   // Paths are judged from the repo root, so a session in a subfolder can't slip past.
   root = cwd,
 ): { permissionDecision: "deny"; permissionDecisionReason: string } | undefined {
-  const parsed = inputSchema.safeParse(typeof raw === "string" ? { input: raw } : (raw ?? {}));
-  if (!parsed.success)
+  let input: ReturnType<typeof parseInput>;
+  try {
+    input = parseInput(raw);
+  } catch {
     return { permissionDecision: "deny", permissionDecisionReason: `Cannot inspect write input. ${ADD_RULE}` };
-  const input = parsed.data;
+  }
   const command = input.command ?? input.cmd ?? input.input ?? "";
   const shell = /(?:Bash|exec_command|shell)/i.test(tool);
   let paths = [...editedPaths({ ...input, command }), ...(input.edits ?? []).flatMap((edit) => editedPaths(edit))];
@@ -76,15 +82,20 @@ export function decision(
 }
 
 if (import.meta.main) {
-  const input = readHookInput();
-  const event = z.object({ tool_name: z.string().optional() }).parse(input);
-  const cwd = input.cwd ?? process.cwd();
-  let root = cwd;
   try {
-    root = repoRoot(cwd);
+    const input = readHookInput(true);
+    const tool = optionalString(record(input).tool_name);
+    const cwd = input.cwd ?? process.cwd();
+    let root = cwd;
+    try {
+      root = repoRoot(cwd);
+    } catch {
+      // Outside a repo, cwd is the only anchor.
+    }
+    const result = decision(tool ?? "Write", input.tool_input, cwd, homedir(), root);
+    if (result) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", ...result } }));
   } catch {
-    // Outside a repo, cwd is the only anchor.
+    console.error("Instruction guard could not inspect this write. Blocked.");
+    process.exitCode = 2;
   }
-  const result = decision(event.tool_name ?? "Write", input.tool_input, cwd, homedir(), root);
-  if (result) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", ...result } }));
 }

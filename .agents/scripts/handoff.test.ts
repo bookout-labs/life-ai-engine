@@ -77,6 +77,9 @@ test("handoff validates required recovery fields and bounds the header in UTF-8 
   assert.equal(run({ ...packet, jobs: [{}] }).status, 1);
   assert.equal(run({ ...packet, jobs: [packet.jobs[0], packet.jobs[0]] }).status, 1);
   assert.equal(run({ ...packet, standingOrders: "" }).status, 1);
+  assert.equal(run({ ...packet, extra: true }).status, 1);
+  assert.equal(run({ ...packet, header: { ...packet.header, extra: true } }).status, 1);
+  assert.equal(run({ ...packet, jobs: [{ ...packet.jobs[0], extra: true }] }).status, 1);
 });
 
 test("capture and storage errors return failure without leaking input", (t) => {
