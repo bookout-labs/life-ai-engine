@@ -3,7 +3,7 @@
 // Node built-ins only: a hook whose imports are missing fails open.
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, matchesGlob, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { repoRoot } from "./changes.ts";
 import { editedPaths, readHookInput } from "./edits.ts";
 
@@ -31,6 +31,23 @@ export function denyGlobs(rules: unknown[], root: string, home: string): string[
     if (glob.startsWith("~/")) return [join(home, glob.slice(2))];
     return [glob.startsWith("//") ? glob.slice(1) : join(root, glob)];
   });
+}
+
+// Like gitignore, ** crosses dot-folders too (.claude/CLAUDE.md); node's matchesGlob skips them.
+export function matches(path: string, glob: string): boolean {
+  const pattern = glob
+    .split(/(\*\*\/|\*\*|\*)/)
+    .map((part) =>
+      part === "**/"
+        ? "(?:.*/)?"
+        : part === "**"
+          ? ".*"
+          : part === "*"
+            ? "[^/]*"
+            : part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"),
+    )
+    .join("");
+  return new RegExp(`^${pattern}$`).test(path);
 }
 
 // Codex has no native deny list, so its shell writes are read here: redirect targets and file-writing commands' operands.
@@ -63,7 +80,7 @@ export function protectedPaths(tool: string, toolInput: unknown, cwd: string, gl
       ];
   return paths
     .map((path) => resolve(cwd, path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/)/, home)))
-    .filter((path) => globs.some((glob) => matchesGlob(path, glob)));
+    .filter((path) => globs.some((glob) => matches(path, glob)));
 }
 
 if (import.meta.main) {

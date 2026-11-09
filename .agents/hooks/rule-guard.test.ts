@@ -17,6 +17,9 @@ const protectedFiles = [
   "AGENTS.md",
   "CLAUDE.md",
   "wiki/AGENTS.md",
+  ".claude/CLAUDE.md",
+  ".codex/AGENTS.md",
+  "a/.hidden/AGENTS.md",
   "projects/x/CLAUDE.md",
   ".claude/rules/code.md",
   `${home}/.claude/CLAUDE.md`,
@@ -74,6 +77,8 @@ await test("allows ordinary edits, the registry and the catalog", () => {
     ".agents/rules.ts",
     "docs/skill-map.md",
     "wiki/AGENTS.md.bak",
+    "wiki/NOTAGENTS.md",
+    ".claude/rulesx/a.md",
     `${home}/.claude/settings.json`,
   ])
     assert.equal(blocked({ file_path: path }), false, path);
