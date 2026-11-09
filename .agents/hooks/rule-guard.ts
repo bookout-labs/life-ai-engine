@@ -66,6 +66,9 @@ export function matches(path: string, glob: string, removes = false): boolean {
 // anywhere in its arguments is blocked, option values included (-t DIR, -tDIR, --x=DIR, of=FILE). Broad on purpose:
 // parsing each command's option syntax never ended (#107); a rare false block, like cp AGENTS.md /tmp, is the cost.
 function shellMentions(command: string): string[] {
+  // A cd earlier in the chain moves where later relative paths land: cd .claude && touch rules/x.md.
+  let dir = "";
+  const here = (path: string) => (!path || /^[/~$]/.test(path) ? path : join(dir || ".", path));
   // 2>&1 duplicates a stream, it writes no file; left in, the split at & would leave an empty redirect target.
   return command
     .replace(/\d*>&\d+/g, " ")
@@ -74,12 +77,20 @@ function shellMentions(command: string): string[] {
       const tokens = (statement.match(/"(?:\\.|[^"\\])*"|'[^']*'|>>?|[^\s<>]+/g) ?? []).map((token) =>
         token.replace(/^(['"])(.*)\1$/, "$2"),
       );
+      if (tokens[0] === "cd") {
+        const to = tokens[1] ?? "~";
+        dir = /^[/~$]/.test(to) ? to : join(dir || ".", to);
+        return [];
+      }
       const redirects = tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [tokens[i + 1] ?? ""] : []));
+      // By name or by path: rm and /bin/rm alike.
       const writes =
-        tokens.some((token) => /^(?:tee|cp|mv|rm|rmdir|unlink|install|truncate|touch|ln|dd)$/.test(token)) ||
-        (tokens.includes("sed") && tokens.some((token) => /^-i/.test(token)));
-      if (!writes) return redirects;
-      return tokens.flatMap((token) => [token, token.replace(/^-*[\w-]*=/, ""), token.replace(/^-[A-Za-z]/, "")]);
+        tokens.some((token) => /(?:^|\/)(?:tee|cp|mv|rm|rmdir|unlink|install|truncate|touch|ln|dd)$/.test(token)) ||
+        (tokens.some((token) => /(?:^|\/)sed$/.test(token)) && tokens.some((token) => /^-i/.test(token)));
+      const mentioned = writes
+        ? tokens.flatMap((token) => [token, token.replace(/^-*[\w-]*=/, ""), token.replace(/^-[A-Za-z]/, "")])
+        : redirects;
+      return mentioned.map(here);
     });
 }
 

@@ -77,6 +77,11 @@ await test("a write command that mentions a protected path or folder, in any for
     `install -m 644 x.md ${home}/.claude/projects/p/memory`,
     "cp -t.claude/rules notes.md",
     "dd if=x of=AGENTS.md",
+    "/bin/rm AGENTS.md",
+    "/usr/bin/sed -i '' s/x/y/ CLAUDE.md",
+    "cd .claude && touch rules/new.md",
+    `cd ${home}/.claude; echo x > CLAUDE.md`,
+    "cd wiki && cd .. && rm AGENTS.md",
     "cp notes.md .claude",
     `touch ${home}/.claude`,
   ])
