@@ -61,7 +61,7 @@ for (const path of protectedFiles)
     }
   });
 
-await test("deleting a protected folder or a folder that holds one is blocked", () => {
+await test("a write command that mentions a protected path or folder, in any form, is blocked", () => {
   for (const command of [
     "rm -rf .claude/rules",
     `rm -rf ${home}/.claude/rules`,
@@ -75,19 +75,22 @@ await test("deleting a protected folder or a folder that holds one is blocked", 
     `mv --target-directory=${home}/.claude/rules a.md b.md`,
     `mv notes.md ${home}/.claude/rules/`,
     `install -m 644 x.md ${home}/.claude/projects/p/memory`,
+    "cp -t.claude/rules notes.md",
+    "dd if=x of=AGENTS.md",
+    "cp notes.md .claude",
+    `touch ${home}/.claude`,
   ])
     assert.ok(blocked({ cmd: command }, root, "exec_command"), command);
   for (const command of [
-    "cp notes.md .claude",
-    `touch ${home}/.claude`,
     "rm -rf build",
+    "cp notes.md docs/",
     "rm -rf .claude/skills/old",
     `rm -rf ${home}/.claude/projects/p/cache`,
   ])
     assert.equal(blocked({ cmd: command }, root, "exec_command"), false, command);
 });
 
-await test("deleting a folder that holds a tracked instruction file is blocked", () => {
+await test("a write command that names a folder holding a tracked instruction file is blocked", () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "rule-guard-tree-")));
   spawnSync("git", ["-C", dir, "init", "-q"]);
   mkdirSync(join(dir, "wiki"));
@@ -97,7 +100,7 @@ await test("deleting a folder that holds a tracked instruction file is blocked",
   const local = denyGlobs(CORE, dir, home);
   assert.ok(protectedPaths("exec_command", { cmd: "rm -rf wiki" }, dir, local, home).length);
   assert.equal(protectedPaths("exec_command", { cmd: "rm wiki/page.md" }, dir, local, home).length, 0);
-  assert.equal(protectedPaths("exec_command", { cmd: "cp -r wiki /tmp/backup" }, dir, local, home).length, 0);
+  assert.ok(protectedPaths("exec_command", { cmd: "cp -r wiki /tmp/backup" }, dir, local, home).length);
   assert.ok(protectedPaths("exec_command", { cmd: "mv wiki /tmp/gone" }, dir, local, home).length);
 });
 
@@ -106,6 +109,8 @@ await test("shell reads and unrelated writes pass", () => {
     "cat AGENTS.md",
     "rg rule CLAUDE.md",
     "echo hi > notes.md",
+    "npm run check 2>&1 | grep -iE 'error' | head -10",
+    "ls >",
     "node .agents/scripts/rules.ts --write",
   ])
     assert.equal(blocked({ cmd: command }, root, "exec_command"), false, command);

@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { repoRoot } from "./changes.ts";
 import { editedPaths, readHookInput } from "./edits.ts";
 
@@ -47,8 +47,8 @@ const toRegex = (glob: string) =>
       .join("")}$`,
   );
 
-// A target matches when it is a protected path or, for a remove or move, a folder above one, wildcards included:
-// rm -rf .claude/rules, ~/.claude, or ~/.claude/projects/p (which holds p/memory). Above a ** the hook can't tell.
+// A target matches when it is a protected path or, for a shell write or Delete, a folder above one, wildcards
+// included: rm -rf .claude/rules, ~/.claude, or ~/.claude/projects/p (which holds p/memory). Above a ** it can't tell.
 export function matches(path: string, glob: string, removes = false): boolean {
   if (toRegex(glob).test(path)) return true;
   if (!removes) return false;
@@ -62,42 +62,28 @@ export function matches(path: string, glob: string, removes = false): boolean {
   );
 }
 
-// Shell writes are read here, for Codex (no native deny list) and as the fixed floor for Claude and Grok: redirect targets and file-writing commands' operands.
-// Operands of rm, rmdir, unlink and mv remove what they name, so their folders are expanded (see tracked).
-function shellTargets(command: string): { path: string; removes: boolean }[] {
-  return command.split(/[;&|\n]+/).flatMap((statement) => {
-    const tokens = (statement.match(/"(?:\\.|[^"\\])*"|'[^']*'|>>?|[^\s<>]+/g) ?? []).map((token) =>
-      token.replace(/^(['"])(.*)\1$/, "$2"),
-    );
-    const writer = tokens.findIndex(
-      (token) =>
-        /^(?:tee|cp|mv|rm|rmdir|unlink|install|truncate|touch|ln)$/.test(token) ||
-        (token === "sed" && tokens.some((t) => /^-i/.test(t))),
-    );
-    const command = tokens[writer] ?? "";
-    const args = writer >= 0 ? tokens.slice(writer + 1) : [];
-    // -t DIR / --target-directory=DIR names the destination up front; it then goes last like a plain destination.
-    const t = args.findIndex((arg) => arg === "-t" || arg === "--target-directory");
-    const target = t >= 0 ? args[t + 1] : args.find((arg) => arg.startsWith("--target-directory="))?.split("=")[1];
-    const plain = args.filter((arg, i) => !arg.startsWith("-") && !(t >= 0 && i === t + 1));
-    const operands = target ? [...plain, target] : plain;
-    // mv removes its sources, not its destination; rm, rmdir and unlink remove every operand.
-    const removed = (i: number) =>
-      /^(?:rm|rmdir|unlink)$/.test(command) || (command === "mv" && i < operands.length - 1);
-    // cp, mv, install and ln may write into a destination folder: dest/<source name>.
-    const dest = operands.at(-1) ?? "";
-    const into = /^(?:cp|mv|install|ln)$/.test(command)
-      ? operands.slice(0, -1).map((source) => ({ path: join(dest, basename(source)), removes: false }))
-      : [];
-    return [
-      ...operands.map((path, i) => ({ path, removes: removed(i) })),
-      ...into,
-      ...tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [{ path: tokens[i + 1] ?? "", removes: false }] : [])),
-    ];
-  });
+// Shell writes, for every agent: a write command that mentions a protected path, or a folder above or holding one,
+// anywhere in its arguments is blocked, option values included (-t DIR, -tDIR, --x=DIR, of=FILE). Broad on purpose:
+// parsing each command's option syntax never ended (#107); a rare false block, like cp AGENTS.md /tmp, is the cost.
+function shellMentions(command: string): string[] {
+  // 2>&1 duplicates a stream, it writes no file; left in, the split at & would leave an empty redirect target.
+  return command
+    .replace(/\d*>&\d+/g, " ")
+    .split(/[;&|\n]+/)
+    .flatMap((statement) => {
+      const tokens = (statement.match(/"(?:\\.|[^"\\])*"|'[^']*'|>>?|[^\s<>]+/g) ?? []).map((token) =>
+        token.replace(/^(['"])(.*)\1$/, "$2"),
+      );
+      const redirects = tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [tokens[i + 1] ?? ""] : []));
+      const writes =
+        tokens.some((token) => /^(?:tee|cp|mv|rm|rmdir|unlink|install|truncate|touch|ln|dd)$/.test(token)) ||
+        (tokens.includes("sed") && tokens.some((token) => /^-i/.test(token)));
+      if (!writes) return redirects;
+      return tokens.flatMap((token) => [token, token.replace(/^-*[\w-]*=/, ""), token.replace(/^-[A-Za-z]/, "")]);
+    });
 }
 
-// A folder that is removed or moved takes the tracked files inside it, such as wiki/AGENTS.md.
+// A folder a write command mentions takes the tracked files inside it, such as wiki/AGENTS.md.
 function tracked(path: string): string[] {
   try {
     if (!statSync(path).isDirectory()) return [];
@@ -115,7 +101,9 @@ export function protectedPaths(tool: string, toolInput: unknown, cwd: string, gl
   const input = (typeof toolInput === "string" ? { input: toolInput } : (toolInput ?? {})) as Record<string, unknown>;
   const text = [input.command, input.cmd, input.input].filter((value) => typeof value === "string").join("\n");
   const targets = /Bash|exec_command|shell/i.test(tool)
-    ? shellTargets(text)
+    ? shellMentions(text)
+        .filter(Boolean)
+        .map((path) => ({ path, removes: true }))
     : [
         ...editedPaths(toolInput),
         ...(Array.isArray(input.edits) ? input.edits : []).flatMap((edit) => editedPaths(edit)),
