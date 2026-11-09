@@ -85,6 +85,8 @@ await test("shell reads and unrelated writes pass", () => {
     "echo hi > notes.md",
     "npm run check 2>&1 | grep -iE 'error' | head -10",
     "cp AGENTS.md /tmp/backup.md",
+    "echo cp AGENTS.md",
+    "grep -n rm CLAUDE.md",
     "node .agents/scripts/rules.ts --write",
   ])
     assert.equal(blocked({ cmd: command }, root, "exec_command"), false, command);

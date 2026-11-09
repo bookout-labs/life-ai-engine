@@ -57,15 +57,14 @@ function shellTargets(command: string): string[] {
       const tokens = (statement.match(/"(?:\\.|[^"\\])*"|'[^']*'|>>?|[^\s<>]+/g) ?? []).map((token) =>
         token.replace(/^(['"])(.*)\1$/, "$2"),
       );
-      const writer = tokens.findIndex(
-        (token) =>
-          /^(?:tee|cp|mv|rm|unlink|touch|truncate)$/.test(token) ||
-          (token === "sed" && tokens.some((t) => /^-i/.test(t))),
-      );
-      const operands = writer >= 0 ? tokens.slice(writer + 1).filter((token) => !token.startsWith("-")) : [];
+      // Only the command itself, the statement's first word, counts: echo cp AGENTS.md writes nothing.
+      const name = tokens[0] ?? "";
+      const writes =
+        /^(?:tee|cp|mv|rm|unlink|touch|truncate)$/.test(name) || (name === "sed" && tokens.some((t) => /^-i/.test(t)));
+      const operands = writes ? tokens.slice(1).filter((token) => !token.startsWith("-")) : [];
       return [
         // cp writes only its destination; mv also removes its sources.
-        ...(tokens[writer] === "cp" ? operands.slice(-1) : operands),
+        ...(name === "cp" ? operands.slice(-1) : operands),
         ...tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [tokens[i + 1] ?? ""] : [])),
       ];
     });
