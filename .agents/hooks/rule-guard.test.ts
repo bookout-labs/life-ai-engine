@@ -68,6 +68,8 @@ await test("deleting a protected folder or a folder that holds one is blocked", 
     `rm -r ${home}/.claude/projects/p/memory`,
     `rm -rf ${home}/.claude`,
     `mv ${home}/.codex /tmp/x`,
+    `rm -rf ${home}/.claude/projects/p`,
+    `rm -rf ${home}/.claude/projects`,
   ])
     assert.ok(blocked({ cmd: command }, root, "exec_command"), command);
   for (const command of ["rm -rf build", "rm -rf .claude/skills/old", `rm -rf ${home}/.claude/projects/p/cache`])
@@ -84,6 +86,8 @@ await test("deleting a folder that holds a tracked instruction file is blocked",
   const local = denyGlobs(CORE, dir, home);
   assert.ok(protectedPaths("exec_command", { cmd: "rm -rf wiki" }, dir, local, home).length);
   assert.equal(protectedPaths("exec_command", { cmd: "rm wiki/page.md" }, dir, local, home).length, 0);
+  assert.equal(protectedPaths("exec_command", { cmd: "cp -r wiki /tmp/backup" }, dir, local, home).length, 0);
+  assert.ok(protectedPaths("exec_command", { cmd: "mv wiki /tmp/gone" }, dir, local, home).length);
 });
 
 await test("shell reads and unrelated writes pass", () => {

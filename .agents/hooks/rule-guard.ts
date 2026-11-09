@@ -1,4 +1,5 @@
-// Claude and Grok enforce .claude/settings.json permissions.deny natively, shell writes included.
+// Claude and Grok enforce .claude/settings.json permissions.deny natively, shell writes included: Claude checks
+// >, >>, tee, cp, mv, rm and sed -i targets against Edit(...) rules, cd chains too (live test, #107, 2026-11-09).
 // This hook applies its built-in list, plus any extra entries there, to file-edit tools for every agent and to shell writes for Codex.
 // Node built-ins only: a hook whose imports are missing fails open.
 import { execFileSync } from "node:child_process";
@@ -35,41 +36,54 @@ export function denyGlobs(rules: unknown[], root: string, home: string): string[
 }
 
 // Like gitignore, ** crosses dot-folders too (.claude/CLAUDE.md); node's matchesGlob skips them.
-// A target also matches when it is, or contains, a protected folder: rm -rf .claude/rules or ~/.claude.
+const segment = (part: string) =>
+  ({ "**/": "(?:.*/)?", "**": ".*", "*": "[^/]*" })[part] ?? part.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+const toRegex = (glob: string) =>
+  new RegExp(
+    `^${glob
+      .split(/(\*\*\/|\*\*|\*)/)
+      .map(segment)
+      .join("")}$`,
+  );
+
+// A target matches when it is a protected path or a folder above one, wildcards included:
+// rm -rf .claude/rules, ~/.claude, or ~/.claude/projects/p (which holds p/memory). Above a ** the hook can't tell.
 export function matches(path: string, glob: string): boolean {
-  const fixed = glob.slice(0, glob.search(/\*|$/)).replace(/\/[^/]*$/, "");
-  if (fixed === path || fixed.startsWith(`${path}/`)) return true;
-  const pattern = glob
-    .replace(/\/\*\*$/, "\0")
-    .split(/(\0|\*\*\/|\*\*|\*)/)
-    .map(
-      (part) =>
-        ({ "\0": "(?:/.*)?", "**/": "(?:.*/)?", "**": ".*", "*": "[^/]*" })[part] ??
-        part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"),
-    )
-    .join("");
-  return new RegExp(`^${pattern}$`).test(path);
+  if (toRegex(glob).test(path)) return true;
+  const parts = path.split("/");
+  const globParts = glob.split("/");
+  const above = globParts.slice(0, parts.length);
+  return (
+    parts.length < globParts.length &&
+    !above.includes("**") &&
+    parts.every((part, i) => toRegex(above[i] ?? "").test(part))
+  );
 }
 
 // Codex has no native deny list, so its shell writes are read here: redirect targets and file-writing commands' operands.
-function shellTargets(command: string): string[] {
+// Operands of rm, rmdir, unlink and mv remove what they name, so their folders are expanded (see tracked).
+function shellTargets(command: string): { path: string; removes: boolean }[] {
   return command.split(/[;&|\n]+/).flatMap((statement) => {
     const tokens = (statement.match(/"(?:\\.|[^"\\])*"|'[^']*'|>>?|[^\s<>]+/g) ?? []).map((token) =>
       token.replace(/^(['"])(.*)\1$/, "$2"),
     );
     const writer = tokens.findIndex(
       (token) =>
-        /^(?:tee|cp|mv|rm|unlink|install|truncate|touch|ln)$/.test(token) ||
+        /^(?:tee|cp|mv|rm|rmdir|unlink|install|truncate|touch|ln)$/.test(token) ||
         (token === "sed" && tokens.some((t) => /^-i/.test(t))),
     );
+    const removes = /^(?:rm|rmdir|unlink|mv)$/.test(tokens[writer] ?? "");
     return [
-      ...(writer >= 0 ? tokens.slice(writer + 1).filter((token) => !token.startsWith("-")) : []),
-      ...tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [tokens[i + 1] ?? ""] : [])),
+      ...(writer >= 0 ? tokens.slice(writer + 1).filter((token) => !token.startsWith("-")) : []).map((path) => ({
+        path,
+        removes,
+      })),
+      ...tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [{ path: tokens[i + 1] ?? "", removes: false }] : [])),
     ];
   });
 }
 
-// A folder an rm or mv targets also takes the tracked files inside it, such as wiki/AGENTS.md.
+// A folder that is removed or moved takes the tracked files inside it, such as wiki/AGENTS.md.
 function tracked(path: string): string[] {
   try {
     if (!statSync(path).isDirectory()) return [];
@@ -86,17 +100,18 @@ function tracked(path: string): string[] {
 export function protectedPaths(tool: string, toolInput: unknown, cwd: string, globs: string[], home: string): string[] {
   const input = (typeof toolInput === "string" ? { input: toolInput } : (toolInput ?? {})) as Record<string, unknown>;
   const text = [input.command, input.cmd, input.input].filter((value) => typeof value === "string").join("\n");
-  const paths = /Bash|exec_command|shell/i.test(tool)
+  const targets = /Bash|exec_command|shell/i.test(tool)
     ? shellTargets(text)
     : [
         ...editedPaths(toolInput),
         ...(Array.isArray(input.edits) ? input.edits : []).flatMap((edit) => editedPaths(edit)),
         ...[...text.matchAll(/^\*\*\* (?:Delete File|Move to): (.+)$/gm)].map((match) => match[1]?.trim() ?? ""),
-      ];
-  const shell = /Bash|exec_command|shell/i.test(tool);
-  return paths
-    .map((path) => resolve(cwd, path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/)/, home)))
-    .flatMap((path) => (shell ? [path, ...tracked(path)] : [path]))
+      ].map((path) => ({ path, removes: false }));
+  return targets
+    .flatMap(({ path, removes }) => {
+      const full = resolve(cwd, path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/)/, home));
+      return removes ? [full, ...tracked(full)] : [full];
+    })
     .filter((path) => globs.some((glob) => matches(path, glob)));
 }
 
