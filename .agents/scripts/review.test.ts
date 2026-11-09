@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -54,7 +54,17 @@ test("blocked rounds count from the last regroup", () => {
   assert.equal(roundsSinceRegroup(["quoting Review blocked (round 1/3)", " Regroup: no"]), 0);
 });
 
-test("Codex GraphQL review maps P0 and absent line and ignores old heads", async (t) => {
+function codexFixture(
+  t: import("node:test").TestContext,
+  {
+    sha = "head",
+    login = "chatgpt-codex-connector[bot]",
+    unresolved = false,
+    formal = false,
+    includeState = true,
+    requestLogin = "",
+  } = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), "codex-review-test-"));
   const previous = process.env.PATH;
   t.after(() => {
@@ -63,33 +73,83 @@ test("Codex GraphQL review maps P0 and absent line and ignores old heads", async
   });
   process.env.PATH = `${dir}:${previous}`;
   writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}');
-  const fixture = (oid: string) => {
-    const data = {
-      data: {
-        repository: {
-          pullRequest: {
-            reviews: {
-              nodes: [
-                {
-                  author: { login: "chatgpt-codex-connector" },
-                  commit: { oid },
-                  body: "Reviewed",
-                  comments: { nodes: [{ path: "a.ts", line: null, body: "[P0] Synthetic bug" }] },
-                },
-              ],
-            },
-          },
+  const comments = [
+    {
+      user: { login },
+      body: `<!-- codex-review-state:v1 ${JSON.stringify({
+        code_review: {
+          commit_sha: sha,
+          status: "completed",
+          has_any_findings: unresolved,
+          has_unresolved_findings: unresolved,
         },
-      },
-    };
-    writeFileSync(join(dir, "gh"), `#!${process.execPath}\nconsole.log(${JSON.stringify(JSON.stringify(data))});`, {
-      mode: 0o755,
-    });
-  };
-  fixture("head");
+        security_review: { status: null },
+      })} -->`,
+    },
+  ];
+  if (!includeState) comments.length = 0;
+  if (requestLogin)
+    comments.push({ user: { login: requestLogin }, body: "@codex review\n\n<!-- codex-review-request:head -->" });
+  const reviews = formal ? [{ user: { login }, id: 12, commit_id: sha, body: "Reviewed" }] : [];
+  const inline = [{ path: "a.ts", line: null, body: "[P0] Synthetic bug" }];
+  writeFileSync(
+    join(dir, "gh"),
+    `#!${process.execPath}
+const path = process.argv[3];
+if (process.argv.includes('-f')) {
+  require('node:fs').appendFileSync(${JSON.stringify(join(dir, "requests"))}, process.argv.at(-1) + '\\n');
+  process.exit(0);
+}
+console.log(JSON.stringify([path.endsWith('/reviews/12/comments') ? ${JSON.stringify(inline)} : path.endsWith('/reviews') ? ${JSON.stringify(reviews)} : ${JSON.stringify(comments)}]));`,
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
+test("clean Codex state at head passes without a formal review", async (t) => {
+  codexFixture(t);
+  assert.deepEqual(blocking(await codexReview("owner/repo", 1, "head", 0)), []);
+});
+for (const [name, options] of [
+  ["older SHA", { sha: "old" }],
+  ["forged state", { login: "someone-else" }],
+  ["forged formal review", { login: "someone-else", formal: true }],
+] as const)
+  test(`Codex ignores ${name}`, async (t) => {
+    codexFixture(t, options);
+    await assert.rejects(codexReview("owner/repo", 1, "head", 0), /No Codex review/);
+  });
+test("unresolved state blocks with inline findings", async (t) => {
+  codexFixture(t, { unresolved: true, formal: true });
   const review = await codexReview("owner/repo", 1, "head", 0);
-  assert.equal(review.findings[0]?.priority, 0);
+  assert.equal(blocking(review)[0]?.priority, 0);
   assert.equal(review.findings[0]?.line, 0);
-  fixture("old");
-  await assert.rejects(codexReview("owner/repo", 1, "head", 0), /No Codex review/);
+});
+test("unresolved state cannot pass before inline comments arrive", async (t) => {
+  codexFixture(t, { unresolved: true });
+  assert.equal(blocking(await codexReview("owner/repo", 1, "head", 0)).length, 1);
+});
+
+test("formal review alone blocks at the head", async (t) => {
+  codexFixture(t, { formal: true, includeState: false });
+  assert.equal(blocking(await codexReview("owner/repo", 1, "head", 0))[0]?.priority, 0);
+});
+for (const requestLogin of ["", "someone-else", "github-actions[bot]"]) {
+  test(`Codex request is once per head, existing requester ${requestLogin || "none"}`, async (t) => {
+    const dir = codexFixture(t, { includeState: false, requestLogin });
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+    const pending = assert.rejects(codexReview("owner/repo", 1, "head", 120_000), /No Codex review/);
+    for (let i = 0; i < 6; i++) {
+      t.mock.timers.tick(20_000);
+      await Promise.resolve();
+    }
+    await pending;
+    if (requestLogin === "github-actions[bot]") assert.throws(() => readFileSync(join(dir, "requests")));
+    else assert.equal(readFileSync(join(dir, "requests"), "utf8").match(/@codex review/g)?.length, 1);
+  });
+}
+
+test("completed clean state supersedes resolved inline findings at the same head", async (t) => {
+  codexFixture(t, { formal: true });
+  assert.deepEqual(blocking(await codexReview("owner/repo", 1, "head", 0)), []);
 });

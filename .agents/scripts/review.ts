@@ -115,44 +115,73 @@ export function claudeReview(base: string, sha: string, issue: string): Review {
   return parseReview((JSON.parse(out) as { structured_output?: unknown }).structured_output);
 }
 
-type CodexReview = {
-  author: { login: string } | null;
-  commit: { oid: string } | null;
-  body: string;
-  comments: { nodes: { path: string; line: number | null; body: string }[] };
-};
+type CodexComment = { user: { login: string } | null; body: string };
+type CodexReview = CodexComment & { id: number; commit_id: string };
+type InlineComment = { path: string; line: number | null; body: string };
 
-// Codex Cloud posts a GitHub review on every PR it is connected to and flags only P0/P1 inline, so any inline comment blocks.
-// Polls because Codex's review is not a check run (openai/codex#27691); a missing review within the deadline fails closed.
+const CODEX = "chatgpt-codex-connector[bot]";
+
+// REST preserves the bot login suffix; paginate so an older result or request is not lost.
 export async function codexReview(repo: string, pr: number, sha: string, deadlineMs = 15 * 60_000): Promise<Review> {
-  const [owner, name] = repo.split("/");
-  const query =
-    "query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){reviews(last:30){nodes{author{login}commit{oid}body comments(first:100){nodes{path line body}}}}}}}";
+  const api = (...args: string[]): string => execFileSync("gh", ["api", ...args], { encoding: "utf8", stdio: "pipe" });
+  const list = <T>(path: string): T[] => JSON.parse(api(path, "--paginate", "--slurp")).flat();
   const start = Date.now();
+  const marker = `<!-- codex-review-request:${sha} -->`;
+  let requested = false;
   for (;;) {
-    const out = execFileSync(
-      "gh",
-      ["api", "graphql", "-f", `query=${query}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `pr=${pr}`],
-      { encoding: "utf8", stdio: "pipe" },
-    );
-    const reviews: CodexReview[] = JSON.parse(out).data.repository.pullRequest.reviews.nodes;
-    const mine = reviews.filter((r) => r.author?.login === "chatgpt-codex-connector" && r.commit?.oid === sha).at(-1);
-    if (mine) {
-      return {
-        summary: mine.body.split("\n")[0] ?? "Codex review",
-        findings: mine.comments.nodes.map((c) => ({
+    const comments = list<CodexComment>(`repos/${repo}/issues/${pr}/comments`);
+    const reviews = list<CodexReview>(`repos/${repo}/pulls/${pr}/reviews`);
+    const mine = reviews.filter((r) => r.user?.login === CODEX && r.commit_id === sha).at(-1);
+    let unresolved: boolean | undefined;
+    for (const comment of comments) {
+      if (comment.user?.login !== CODEX) continue;
+      const match = /<!-- codex-review-state:v1 (.*?) -->/s.exec(comment.body);
+      if (!match) continue;
+      try {
+        const state = JSON.parse(match[1] ?? "").code_review;
+        if (
+          state?.commit_sha === sha &&
+          state.status === "completed" &&
+          typeof state.has_unresolved_findings === "boolean"
+        ) {
+          unresolved = state.has_unresolved_findings;
+        }
+      } catch {
+        // An incomplete or malformed state is not a completed review.
+      }
+    }
+    if (unresolved === false) return { summary: "Codex review completed", findings: [] };
+    const findings: Finding[] = mine
+      ? list<InlineComment>(`repos/${repo}/pulls/${pr}/reviews/${mine.id}/comments`).map((c) => ({
           priority: /\[P0\]/.test(c.body) ? 0 : 1,
           title: c.body.split("\n")[0]?.slice(0, 120) ?? "Codex finding",
           file: c.path,
           line: c.line ?? 0,
           body: c.body,
-        })),
-      };
+        }))
+      : [];
+    if (unresolved === true && findings.length === 0) {
+      findings.push({
+        priority: 1,
+        title: "Codex has unresolved findings",
+        file: "",
+        line: 0,
+        body: "See the Codex review on this PR.",
+      });
+    }
+    if (unresolved !== undefined || mine) {
+      return { summary: mine?.body.split("\n")[0] ?? "Codex review completed", findings };
     }
     if (Date.now() - start >= deadlineMs) {
       throw new Error(
         `No Codex review for ${sha.slice(0, 7)} within ${deadlineMs / 60_000} minutes. Is the repo connected to Codex code review?`,
       );
+    }
+    if (!requested && Date.now() - start >= 60_000) {
+      requested = true;
+      if (!comments.some((c) => c.user?.login === "github-actions[bot]" && c.body.includes(marker))) {
+        api(`repos/${repo}/issues/${pr}/comments`, "-f", `body=@codex review\n\n${marker}`);
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 20_000));
   }
