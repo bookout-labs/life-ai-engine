@@ -8,7 +8,8 @@ const root = "/repo";
 const home = "/home/u";
 // The real deny list, so the hook and Claude's native rules can't drift apart.
 const globs = denyGlobs(readFileSync(".claude/settings.json", "utf8"), root, home);
-const blocked = (toolInput: unknown, cwd = root) => protectedPaths(toolInput, cwd, globs, home).length > 0;
+const blocked = (toolInput: unknown, cwd = root, tool = "Write") =>
+  protectedPaths(tool, toolInput, cwd, globs, home).length > 0;
 
 const protectedFiles = [
   "AGENTS.md",
@@ -39,7 +40,30 @@ for (const path of protectedFiles)
     assert.ok(blocked(`*** Begin Patch\n*** Add File: ${path}\n*** End Patch`), "Codex patch as a string");
     assert.ok(blocked({ command: `*** Begin Patch\n*** Delete File: ${path}\n*** End Patch` }), "patch delete");
     assert.ok(blocked({ command: `*** Update File: notes.md\n*** Move to: ${path}` }), "patch move");
+    assert.ok(blocked({ file_path: "notes.md", edits: [{ file_path: path }] }), "nested MultiEdit path");
+    for (const command of [
+      `echo x > '${path}'`,
+      `echo x >> "${path}"`,
+      `echo x | tee '${path}'`,
+      `sed -i '' 's/x/y/' '${path}'`,
+      `cp a '${path}'`,
+      `mv a '${path}'`,
+      `rm '${path}'`,
+    ]) {
+      assert.ok(blocked({ cmd: command }, root, "exec_command"), `Codex shell: ${command}`);
+      assert.ok(blocked({ command }, root, "Bash"), `shell: ${command}`);
+    }
   });
+
+await test("shell reads and unrelated writes pass", () => {
+  for (const command of [
+    "cat AGENTS.md",
+    "rg rule CLAUDE.md",
+    "echo hi > notes.md",
+    "node .agents/scripts/rules.ts --write",
+  ])
+    assert.equal(blocked({ cmd: command }, root, "exec_command"), false, command);
+});
 
 await test("allows ordinary edits, the registry and the catalog", () => {
   for (const path of [

@@ -1,5 +1,5 @@
 // Claude and Grok enforce .claude/settings.json permissions.deny natively, shell writes included.
-// This hook applies the same list to file-edit tools for every agent, so Codex is covered too.
+// This hook applies the same list to file-edit tools for every agent, and to shell writes for Codex.
 // Node built-ins only: a hook whose imports are missing fails open.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -21,11 +21,35 @@ export function denyGlobs(settings: string, root: string, home: string): string[
   });
 }
 
-export function protectedPaths(toolInput: unknown, cwd: string, globs: string[], home: string): string[] {
+// Codex has no native deny list, so its shell writes are read here: redirect targets and file-writing commands' operands.
+function shellTargets(command: string): string[] {
+  return command.split(/[;&|\n]+/).flatMap((statement) => {
+    const tokens = (statement.match(/"(?:\\.|[^"\\])*"|'[^']*'|>>?|[^\s<>]+/g) ?? []).map((token) =>
+      token.replace(/^(['"])(.*)\1$/, "$2"),
+    );
+    const writer = tokens.findIndex(
+      (token) =>
+        /^(?:tee|cp|mv|rm|unlink|install|truncate|touch|ln)$/.test(token) ||
+        (token === "sed" && tokens.some((t) => /^-i/.test(t))),
+    );
+    return [
+      ...(writer >= 0 ? tokens.slice(writer + 1).filter((token) => !token.startsWith("-")) : []),
+      ...tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [tokens[i + 1] ?? ""] : [])),
+    ];
+  });
+}
+
+export function protectedPaths(tool: string, toolInput: unknown, cwd: string, globs: string[], home: string): string[] {
   const input = (typeof toolInput === "string" ? { input: toolInput } : (toolInput ?? {})) as Record<string, unknown>;
-  const patch = [input.command, input.input].filter((value) => typeof value === "string").join("\n");
-  const moved = [...patch.matchAll(/^\*\*\* (?:Delete File|Move to): (.+)$/gm)].map((match) => match[1]?.trim() ?? "");
-  return [...editedPaths(toolInput), ...moved]
+  const text = [input.command, input.cmd, input.input].filter((value) => typeof value === "string").join("\n");
+  const paths = /Bash|exec_command|shell/i.test(tool)
+    ? shellTargets(text)
+    : [
+        ...editedPaths(toolInput),
+        ...(Array.isArray(input.edits) ? input.edits : []).flatMap((edit) => editedPaths(edit)),
+        ...[...text.matchAll(/^\*\*\* (?:Delete File|Move to): (.+)$/gm)].map((match) => match[1]?.trim() ?? ""),
+      ];
+  return paths
     .map((path) => resolve(cwd, path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/)/, home)))
     .filter((path) => globs.some((glob) => matchesGlob(path, glob)));
 }
@@ -40,7 +64,8 @@ if (import.meta.main) {
     // Outside a repo, cwd is the only anchor.
   }
   const globs = denyGlobs(readFileSync(join(root, ".claude/settings.json"), "utf8"), root, homedir());
-  if (protectedPaths(input.tool_input, cwd, globs, homedir()).length)
+  const tool = (input as { tool_name?: unknown }).tool_name;
+  if (protectedPaths(typeof tool === "string" ? tool : "", input.tool_input, cwd, globs, homedir()).length)
     console.log(
       JSON.stringify({
         hookSpecificOutput: {
