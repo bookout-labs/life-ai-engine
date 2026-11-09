@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>save.ts Review</title>
+<style>
+:root{
+  --s-ink:var(--foreground,#1d1d1b); --s-muted:var(--muted-foreground,#6b6b66);
+  --s-card:var(--card,#fff); --s-line:var(--border,#e6e4de); --s-code:var(--code-background,#f2f1ec);
+  --s-keep:var(--success,#2f7d4f); --s-replace:var(--warning,#b4521f); --s-ask:var(--chart-4,#6a4fb3);
+}
+*{box-sizing:border-box}
+body{margin:0;color:var(--s-ink);font:15px/1.5 var(--font-sans,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif)}
+main{max-width:860px;margin:0 auto;padding:4px 0 24px}
+h1{font-size:24px;margin:0 0 4px}
+.sub{color:var(--s-muted);margin:0 0 24px}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--s-code);padding:1px 5px;border-radius:4px}
+.bar{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:8px 0 8px}
+.bar span{display:block}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--s-muted);margin-bottom:28px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.piece{background:var(--s-card);border:1px solid var(--s-line);border-radius:10px;padding:14px 16px;margin:10px 0;display:grid;grid-template-columns:44px 1fr;gap:4px 12px}
+.n{font-weight:600;color:var(--s-muted);font-size:13px;padding-top:2px}
+.head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+.name{font-weight:600}
+.lines{color:var(--s-muted);font-size:12px;font-family:ui-monospace,Menlo,monospace}
+.what{margin:2px 0 6px}
+.tag{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:10px;margin-right:6px}
+.keep{color:var(--s-keep);background:color-mix(in srgb,var(--s-keep) 14%,transparent)}
+.replace{color:var(--s-replace);background:color-mix(in srgb,var(--s-replace) 14%,transparent)}
+.ask{color:var(--s-ask);background:color-mix(in srgb,var(--s-ask) 14%,transparent)}
+.verdict{font-size:14px}
+.body{grid-column:2}
+h2{font-size:17px;margin:36px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:14px;background:var(--s-card);border:1px solid var(--s-line);border-radius:10px;overflow:hidden}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--s-line);vertical-align:top}
+th{font-size:12px;color:var(--s-muted);font-weight:600}
+tr:last-child td{border-bottom:none}
+.note{color:var(--s-muted);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<h1>save.ts, piece by piece</h1>
+<p class="sub">313 lines. What each piece does, and whether a platform already does it better.</p>
+
+<div class="bar" aria-label="Line split">
+  <span style="width:59%;background:var(--s-replace)"></span>
+  <span style="width:33%;background:var(--s-keep)"></span>
+  <span style="width:8%;background:var(--s-ask)"></span>
+</div>
+<div class="legend">
+  <span><i class="dot" style="background:var(--s-replace)"></i>Platform does it better · ~185 lines</span>
+  <span><i class="dot" style="background:var(--s-keep)"></i>Genuinely ours · ~100 lines</span>
+  <span><i class="dot" style="background:var(--s-ask)"></i>Your call · ~25 lines</span>
+</div>
+
+<div class="piece"><div class="n">1</div><div>
+  <div class="head"><span class="name">Setup</span><span class="lines">lines 1–12</span></div>
+  <p class="what">Loads Node's built-in tools and finds the repo folder.</p>
+  <div class="verdict"><span class="tag keep">Keep</span>Plumbing every script needs.</div>
+</div></div>
+
+<div class="piece"><div class="n">2</div><div>
+  <div class="head"><span class="name">Save lock</span><span class="lines">lines 13–16, 181–189, 304–313</span></div>
+  <p class="what">Makes a lock folder so two saves can't run at the same time. Treats a lock older than 15 minutes as abandoned.</p>
+  <div class="verdict"><span class="tag replace">T3 Code</span>Worktree threads give every session its own checkout, so saves can't collide.</div>
+</div></div>
+
+<div class="piece"><div class="n">3</div><div>
+  <div class="head"><span class="name">Hand-off to main's gate</span><span class="lines">lines 18–51</span></div>
+  <p class="what">Downloads main's copy of save.ts, review.ts and proof.ts into a temp folder and re-runs itself from there. That way a change can't approve itself by editing the rules that judge it.</p>
+  <div class="verdict"><span class="tag replace">GitHub</span>This only exists because review runs on your machine. A required check on GitHub runs main's rules by design. Move review there (piece 15) and this disappears.</div>
+</div></div>
+
+<div class="piece"><div class="n">4</div><div>
+  <div class="head"><span class="name">Read arguments</span><span class="lines">lines 53–66, 84</span></div>
+  <p class="what">Reads the work ID, message, issue number and proof note from the command.</p>
+  <div class="verdict"><span class="tag keep">Keep</span>Already uses Node's built-in argument parser.</div>
+</div></div>
+
+<div class="piece"><div class="n">5</div><div>
+  <div class="head"><span class="name">Expand folders into files</span><span class="lines">lines 67–83</span></div>
+  <p class="what">If you name a folder, lists every changed file inside it, including renamed ones.</p>
+  <div class="verdict"><span class="tag replace">git</span><code>git add docs/</code> already does this. After staging, <code>git diff --cached --name-only</code> gives the real file list.</div>
+</div></div>
+
+<div class="piece"><div class="n">6</div><div>
+  <div class="head"><span class="name">Check the inputs</span><span class="lines">lines 86–108</span></div>
+  <p class="what">Rejects a bad work ID, missing message or bad issue number. Asks proof.ts whether these files need an issue or proof, and confirms the issue is open.</p>
+  <div class="verdict"><span class="tag keep">Keep</span>These are Life AI's own rules. CI enforces the same rules; this just fails fast before anything is pushed.</div>
+</div></div>
+
+<div class="piece"><div class="n">7</div><div>
+  <div class="head"><span class="name">GitHub App login</span><span class="lines">lines 110–135</span></div>
+  <p class="what">Makes a short-lived token for the <code>bookout-life-ai-agents</code> App, so saves happen as the App instead of as you.</p>
+  <div class="verdict"><span class="tag keep">Keep</span>Uses GitHub's own <code>gh token generate</code>. Nothing hand-built.</div>
+</div></div>
+
+<div class="piece"><div class="n">8</div><div>
+  <div class="head"><span class="name">Must start on main</span><span class="lines">lines 192–194</span></div>
+  <p class="what">Refuses to save unless you're on the main branch.</p>
+  <div class="verdict"><span class="tag replace">T3 Code</span>With worktrees, each thread already has its own branch.</div>
+</div></div>
+
+<div class="piece"><div class="n">9</div><div>
+  <div class="head"><span class="name">Rebuild INDEX.md</span><span class="lines">lines 196–197</span></div>
+  <p class="what">Regenerates the knowledge index and adds it to the save if it changed.</p>
+  <div class="verdict"><span class="tag replace">GitHub Actions</span>Have CI generate or verify it. Doing it here caused the overlap bug, where one session shipped another session's index.</div>
+</div></div>
+
+<div class="piece"><div class="n">10</div><div>
+  <div class="head"><span class="name">Run the full check locally</span><span class="lines">lines 199–203</span></div>
+  <p class="what">Runs <code>npm run check</code> (types, lint, tests, rules) before saving.</p>
+  <div class="verdict"><span class="tag replace">GitHub + harness</span>CI's required <code>check</code> runs the same thing and can't be skipped. The edit-time lint hook already gives fast feedback while working.</div>
+</div></div>
+
+<div class="piece"><div class="n">11</div><div>
+  <div class="head"><span class="name">Nothing-to-save check</span><span class="lines">lines 205–209</span></div>
+  <p class="what">Stops quietly if the named files have no changes.</p>
+  <div class="verdict"><span class="tag keep">Keep</span>One git call.</div>
+</div></div>
+
+<div class="piece"><div class="n">12</div><div>
+  <div class="head"><span class="name">Agent and session labels</span><span class="lines">lines 211–220</span></div>
+  <p class="what">Works out which agent is saving and its session ID, and stamps them on the commit.</p>
+  <div class="verdict"><span class="tag ask">Your call</span>Claude Code and Codex add their own co-author lines, and T3 links each PR to its thread. The one thing still used is the agent name, which picks the reviewer. That goes away if review moves to GitHub.</div>
+</div></div>
+
+<div class="piece"><div class="n">13</div><div>
+  <div class="head"><span class="name">Dry run</span><span class="lines">lines 222–226</span></div>
+  <p class="what">With <code>--dry-run</code>, prints what it would do and stops.</p>
+  <div class="verdict"><span class="tag ask">Your call</span>Small, rarely used. <code>git status</code> shows the same thing.</div>
+</div></div>
+
+<div class="piece"><div class="n">14</div><div>
+  <div class="head"><span class="name">Branch and commit</span><span class="lines">lines 228–237</span></div>
+  <p class="what">Checks the App key exists, creates a <code>save/…</code> branch, stages the files and commits with the work ID.</p>
+  <div class="verdict"><span class="tag keep">Keep</span>This is the actual save.</div>
+</div></div>
+
+<div class="piece"><div class="n">15</div><div>
+  <div class="head"><span class="name">Cross-family review</span><span class="lines">lines 239–262 (plus review.ts, 138 lines)</span></div>
+  <p class="what">Reads the board issue and counts blocked rounds (stops at 3). Has the other company's agent review the diff locally and posts blocked rounds on the issue. Writes the "Review: pass" receipt into the PR.</p>
+  <div class="verdict"><span class="tag replace">GitHub</span>Codex reviews PRs automatically on your ChatGPT plan. Claude's GitHub Action runs on your Claude subscription. Either one can be a required check that the PR can't tamper with, so the hand-off, receipt and receipt-checking go away. The 3-round cap would move into that workflow. Needs a test first: whether Codex's review can actually block a merge.</div>
+</div></div>
+
+<div class="piece"><div class="n">16</div><div>
+  <div class="head"><span class="name">Push, open PR, turn on auto-merge</span><span class="lines">lines 264–270</span></div>
+  <p class="what">Pushes the branch, opens the PR as the App, and tells GitHub to merge it when checks pass, but only at this exact commit.</p>
+  <div class="verdict"><span class="tag keep">Keep</span>Already hands the merge to GitHub. save.ts could end right here.</div>
+</div></div>
+
+<div class="piece"><div class="n">17</div><div>
+  <div class="head"><span class="name">Wait for merge</span><span class="lines">lines 137–160, 271–274</span></div>
+  <p class="what">Sits and watches the checks, waits for GitHub to merge, then pulls main.</p>
+  <div class="verdict"><span class="tag replace">GitHub + T3 Code</span>Auto-merge already does the merging. T3's PR watch (or GitHub's notifications) reports the outcome, so the agent doesn't have to sit there.</div>
+</div></div>
+
+<div class="piece"><div class="n">18</div><div>
+  <div class="head"><span class="name">Production proof and evidence</span><span class="lines">lines 162–179, 275–284</span></div>
+  <p class="what">Waits for ship.yml to deploy and smoke-test, then posts the proof on the board issue.</p>
+  <div class="verdict"><span class="tag replace">GitHub Actions + Projects</span>ship.yml already runs the deploy and tests. It can post the evidence and close the issue itself, and the board's built-in "closed → Done" setting moves the card.</div>
+</div></div>
+
+<div class="piece"><div class="n">19</div><div>
+  <div class="head"><span class="name">Failure recovery</span><span class="lines">lines 285–301</span></div>
+  <p class="what">If anything fails, undoes the commit, returns to main, deletes the branch and closes the PR so it can't merge later.</p>
+  <div class="verdict"><span class="tag replace">T3 Code + GitHub</span>In a worktree, a failed save just leaves that thread's files as they were. If save.ts ends at auto-merge, a PR that fails checks stays unmerged on its own.</div>
+</div></div>
+
+<h2>Where it would land</h2>
+<table>
+  <tr><th>Platform</th><th>Takes over</th></tr>
+  <tr><td>T3 Code worktrees</td><td>Lock, must-be-on-main, failure recovery</td></tr>
+  <tr><td>GitHub required checks</td><td>Full check, INDEX.md, cross-family review, main's-gate hand-off</td></tr>
+  <tr><td>GitHub auto-merge + T3 PR watch</td><td>Waiting for merge</td></tr>
+  <tr><td>ship.yml + Projects workflow</td><td>Production proof, evidence comment, board Done</td></tr>
+  <tr><td>git</td><td>Folder expansion</td></tr>
+  <tr><td>Claude Code / Codex</td><td>Agent and session labels</td></tr>
+</table>
+
+<h2>Not available</h2>
+<p class="note">GitHub's merge queue, which lines merges up one at a time, only works on repos owned by an organization. <code>jbookout/life-ai</code> is a personal repo.</p>
+<p class="note">Cloudflare already owns deploys through ship.yml. Nothing in save.ts duplicates it directly.</p>
+</main>
+</body>
+</html>
