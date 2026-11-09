@@ -41,7 +41,7 @@ export const RULES: Rule[] = [
       kind: "hook",
       file: ".agents/hooks/rule-guard.ts",
       event: "PreToolUse",
-      tools: { claude: ["Write", "Edit", "MultiEdit"], codex: ["apply_patch", "Bash"] },
+      tools: { claude: ["Write", "Edit", "MultiEdit", "Bash"], codex: ["apply_patch", "Bash"] },
     },
   },
   {

@@ -1,6 +1,7 @@
 // Claude and Grok enforce .claude/settings.json permissions.deny natively, shell writes included: Claude checks
 // >, >>, tee, cp, mv, rm and sed -i targets against Edit(...) rules, cd chains too (live test, #107, 2026-11-09).
-// This hook applies its built-in list, plus any extra entries there, to file-edit tools for every agent and to shell writes for Codex.
+// This hook applies its built-in list, plus any extra entries there, to every agent's file edits and shell writes,
+// so emptying the settings file can't switch the guard off.
 // Node built-ins only: a hook whose imports are missing fails open.
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync, statSync } from "node:fs";
@@ -61,7 +62,7 @@ export function matches(path: string, glob: string, removes = false): boolean {
   );
 }
 
-// Codex has no native deny list, so its shell writes are read here: redirect targets and file-writing commands' operands.
+// Shell writes are read here, for Codex (no native deny list) and as the fixed floor for Claude and Grok: redirect targets and file-writing commands' operands.
 // Operands of rm, rmdir, unlink and mv remove what they name, so their folders are expanded (see tracked).
 function shellTargets(command: string): { path: string; removes: boolean }[] {
   return command.split(/[;&|\n]+/).flatMap((statement) => {
@@ -73,12 +74,13 @@ function shellTargets(command: string): { path: string; removes: boolean }[] {
         /^(?:tee|cp|mv|rm|rmdir|unlink|install|truncate|touch|ln)$/.test(token) ||
         (token === "sed" && tokens.some((t) => /^-i/.test(t))),
     );
-    const removes = /^(?:rm|rmdir|unlink|mv)$/.test(tokens[writer] ?? "");
+    const command = tokens[writer] ?? "";
+    const operands = writer >= 0 ? tokens.slice(writer + 1).filter((token) => !token.startsWith("-")) : [];
+    // mv removes its sources, not its destination; rm, rmdir and unlink remove every operand.
+    const removed = (i: number) =>
+      /^(?:rm|rmdir|unlink)$/.test(command) || (command === "mv" && i < operands.length - 1);
     return [
-      ...(writer >= 0 ? tokens.slice(writer + 1).filter((token) => !token.startsWith("-")) : []).map((path) => ({
-        path,
-        removes,
-      })),
+      ...operands.map((path, i) => ({ path, removes: removed(i) })),
       ...tokens.flatMap((token, i) => (/^>>?$/.test(token) ? [{ path: tokens[i + 1] ?? "", removes: false }] : [])),
     ];
   });
@@ -107,7 +109,7 @@ export function protectedPaths(tool: string, toolInput: unknown, cwd: string, gl
         ...editedPaths(toolInput),
         ...(Array.isArray(input.edits) ? input.edits : []).flatMap((edit) => editedPaths(edit)),
         ...[...text.matchAll(/^\*\*\* (?:Delete File|Move to): (.+)$/gm)].map((match) => match[1]?.trim() ?? ""),
-      ].map((path) => ({ path, removes: false }));
+      ].map((path) => ({ path, removes: tool === "Delete" }));
   return targets
     .flatMap(({ path, removes }) => {
       const full = resolve(cwd, path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/)/, home));
