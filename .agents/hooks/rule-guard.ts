@@ -28,6 +28,7 @@ if (import.meta.main) {
   let reason: string | undefined;
   try {
     const input = readHookInput(true);
+    if (input.tool_input === null || !/^(?:object|string)$/.test(typeof input.tool_input)) throw new Error("no input");
     reason = denies(input.tool_input, input.cwd ?? process.cwd());
   } catch {
     reason = `Cannot inspect this edit. ${REASON}`;

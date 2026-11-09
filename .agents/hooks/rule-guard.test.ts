@@ -62,4 +62,6 @@ await test("hook emits the platform denial protocol with repair instructions", (
     encoding: "utf8",
   });
   assert.match(garbled.stdout, /"permissionDecision":"deny"/);
+  const empty = spawnSync(process.execPath, [".agents/hooks/rule-guard.ts"], { input: "{}", encoding: "utf8" });
+  assert.match(empty.stdout, /"permissionDecision":"deny"/);
 });
