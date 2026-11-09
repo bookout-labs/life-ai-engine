@@ -1,7 +1,8 @@
 // Saves finished work from a T3 worktree: commit, push, PR as the App, auto-merge. GitHub's gate (main's copy) judges it.
 import { execFileSync } from "node:child_process";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { added, leaks, missing, requireOpenIssue } from "./proof.ts";
@@ -55,8 +56,41 @@ if (/[\r\n]/.test(proof)) fail("--proof must be one line");
 const branch: string = git("branch", "--show-current");
 if (!branch || branch === "main") fail("Save from a T3 worktree thread, never from main.");
 
-// git resolves folders, renames and deletions; the staged list is what the rules judge.
-git("add", "-A", "--", ...positionals);
+function canonical(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch (err) {
+    // Deleted paths still need their existing ancestors resolved.
+    if (!(err instanceof Error && "code" in err && err.code === "ENOENT") || lstatSync(path, { throwIfNoEntry: false }))
+      throw err;
+    return join(canonical(dirname(path)), basename(path));
+  }
+}
+
+const root = realpathSync(git("rev-parse", "--show-toplevel"));
+function within(base: string, path: string): string | undefined {
+  const rel = relative(base, path);
+  return rel === ".." || rel.startsWith(`..${sep}`) ? undefined : rel;
+}
+let paths: string[];
+try {
+  paths = positionals.flatMap((path) => {
+    const absolute = resolve(path);
+    const location = join(canonical(dirname(absolute)), basename(absolute));
+    const named = within(root, location);
+    if (named === undefined) fail(`Path resolves outside the repository: ${path}`);
+    const staged = [named || "."];
+    if (lstatSync(location, { throwIfNoEntry: false })?.isSymbolicLink() && existsSync(location)) {
+      const target = realpathSync(location);
+      const inside = within(root, target);
+      if (inside !== undefined && within(target, location) === undefined) staged.push(inside || ".");
+    }
+    return staged;
+  });
+} catch (err) {
+  fail(`Cannot resolve save path: ${err instanceof Error ? err.message : String(err)}`);
+}
+git("-C", root, "add", "-A", "--", ...paths);
 const files: string[] = git("diff", "--cached", "--name-only", "--no-renames", "-z").split("\0").filter(Boolean);
 if (files.length === 0) {
   console.log("Nothing to save in those files.");
@@ -130,8 +164,12 @@ let pr: string = gh(
   "--jq",
   ".[0].url // empty",
 );
-if (pr) gh("pr", "edit", pr, "--title", message, "--body", body);
-else
+if (pr) {
+  gh("pr", "edit", pr, "--title", message, "--body", body);
+  // Auto-merge stays bound to the commit it was first armed on, so a refreshed PR never queues; re-arm it.
+  if (gh("pr", "view", pr, "--json", "autoMergeRequest", "--jq", ".autoMergeRequest != null") === "true")
+    gh("pr", "merge", pr, "--disable-auto");
+} else
   pr = gh(
     "pr",
     "create",

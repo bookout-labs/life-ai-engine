@@ -1,17 +1,78 @@
 // PreToolUse on delegate_task: before a Codex child starts, approve life-ai's own Codex hooks (the user, 2026-11-07),
 // because Codex silently skips unapproved ones and nobody tells Claude.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { mainRoot, repoRoot } from "./changes.ts";
+import { repoRoot } from "./changes.ts";
 import { readHookInput } from "./edits.ts";
+import { array, boolean, isRecord, nonempty, record, string } from "./parse.ts";
 
-type CodexHook = { key: string; enabled: boolean; trustStatus: string; sourcePath: string; currentHash: string };
+function parseHook(value: unknown) {
+  const hook = record(value);
+  return {
+    key: nonempty(hook.key),
+    enabled: boolean(hook.enabled),
+    trustStatus: string(hook.trustStatus),
+    sourcePath: string(hook.sourcePath),
+    currentHash: nonempty(hook.currentHash),
+  };
+}
+type CodexHook = ReturnType<typeof parseHook>;
+
+function projectHooks(repo: string) {
+  const inventory = execFileSync("git", ["worktree", "list", "--porcelain", "-z"], {
+    cwd: repo,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  const first = inventory.split("\0")[0];
+  if (!first?.startsWith("worktree ")) throw new Error("Cannot resolve the primary Git checkout");
+  const primary = realpathSync(first.slice("worktree ".length));
+  const source = join(primary, ".codex", "hooks.json");
+  const local = join(repo, ".codex", "hooks.json");
+  const expected = readFileSync(source);
+  const remediation = `Update the clean primary checkout after merge with git -C ${JSON.stringify(primary)} pull --ff-only. Review and enable hooks in Codex Settings > Hooks before the child's first prompt. Do not copy an unmerged worktree config into the primary checkout.`;
+  let canApprove = false;
+  try {
+    canApprove = expected.equals(
+      execFileSync("git", ["show", "origin/main:.codex/hooks.json"], { cwd: repo, stdio: "pipe" }),
+    );
+  } catch {
+    // Without a merged copy there is no provenance, so approve nothing but still let trusted hooks run.
+  }
+  let localMatches = false;
+  try {
+    localMatches = expected.equals(readFileSync(local));
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+  const warning =
+    canApprove && localMatches
+      ? ""
+      : `Codex project hook configuration differs. Resolved source ${source}; worktree ${local}. Hooks declared on main but missing from the primary (such as rotation) are inactive. ${remediation}`;
+  const config = record(JSON.parse(expected.toString("utf8")));
+  const keys = Object.entries(record(config.hooks)).flatMap(([event, groups]) =>
+    array(groups).flatMap((group, i) =>
+      array(record(group).hooks).map((hook, j) => {
+        const command = record(hook);
+        if (command.type !== "command") throw new Error("Expected a command hook");
+        nonempty(command.command);
+        return `${source}:${event.replace(/[A-Z]/g, (letter, index) => `${index ? "_" : ""}${letter.toLowerCase()}`)}:${i}:${j}`;
+      }),
+    ),
+  );
+  if (!keys.length) throw new Error(`No project hooks declared in ${source}. ${remediation}`);
+  const checkApprovalSource = () => {
+    if (!expected.equals(readFileSync(source)))
+      throw new Error("Primary hook configuration changed during discovery; no trust was written. Retry delegation.");
+  };
+  return { source, keys, warning, remediation, canApprove, checkApprovalSource };
+}
 
 // Only this repo's hooks.json; a disabled hook was turned off on purpose, so it stays off.
-// In a worktree Codex reads the main checkout's hooks.json, so both copies count as this repo's.
-export function toApprove(hooks: CodexHook[], hooksFiles: string[]): CodexHook[] {
-  return hooks.filter((hook) => hooksFiles.includes(hook.sourcePath) && hook.enabled && hook.trustStatus !== "trusted");
+export function toApprove(hooks: CodexHook[], hooksFile: string): CodexHook[] {
+  return hooks.filter((hook) => hook.sourcePath === hooksFile && hook.enabled && hook.trustStatus !== "trusted");
 }
 
 export function unrunnable(hooks: CodexHook[]): string[] {
@@ -23,14 +84,25 @@ function codex(method: string, params: object): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const server = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "ignore"] });
     const send = (message: object) => server.stdin.write(`${JSON.stringify(message)}\n`);
-    const timer = setTimeout(() => server.kill(), 20_000);
+    const timer = setTimeout(() => server.kill(), 7_000);
     server.on("error", reject);
+    // A server that exits before reading makes the write fail with EPIPE; that must deny, not crash open.
+    server.stdin.on("error", reject);
     server.on("exit", () => {
       clearTimeout(timer);
       reject(new Error("codex app-server exited before answering"));
     });
     createInterface({ input: server.stdout }).on("line", (line) => {
-      const message = JSON.parse(line);
+      let message: { id?: number | undefined; error?: unknown; result?: unknown };
+      try {
+        const parsed = record(JSON.parse(line));
+        if (parsed.id !== undefined && typeof parsed.id !== "number") throw new Error("Invalid RPC id");
+        message = { id: parsed.id, error: parsed.error, result: parsed.result };
+      } catch {
+        reject(new Error("Invalid JSON from codex app-server"));
+        server.kill();
+        return;
+      }
       if (message.error) reject(new Error(JSON.stringify(message.error)));
       else if (message.id === 1) {
         send({ method: "initialized" });
@@ -44,9 +116,14 @@ function codex(method: string, params: object): Promise<unknown> {
   });
 }
 
-async function listHooks(repo: string): Promise<CodexHook[]> {
+// User and plugin hooks are not ours to judge, so only this repository's entries are validated.
+async function listHooks(repo: string, source: string): Promise<CodexHook[]> {
   const result = await codex("hooks/list", { cwds: [repo] });
-  return (result as { data?: { hooks?: CodexHook[] }[] }).data?.[0]?.hooks ?? [];
+  const data = array(record(result).data);
+  if (data.length !== 1) throw new Error("Expected one hook inventory");
+  return array(record(data[0]).hooks)
+    .filter((hook) => isRecord(hook) && hook.sourcePath === source)
+    .map(parseHook);
 }
 
 function deny(reason: string): void {
@@ -58,21 +135,45 @@ function deny(reason: string): void {
 }
 
 if (import.meta.main) {
-  const input = readHookInput();
-  const target = (input.tool_input as { target?: { providerInstanceId?: string } } | undefined)?.target;
-  if (target?.providerInstanceId === "codex") {
-    const repo = repoRoot(input.cwd ?? process.cwd());
-    try {
-      const files = [repo, mainRoot(repo)].map((root) => join(root, ".codex", "hooks.json"));
-      const pending = toApprove(await listHooks(repo), files);
-      if (pending.length > 0) {
+  try {
+    const input = readHookInput(true);
+    const target = (input.tool_input as { target?: { providerInstanceId?: string } } | undefined)?.target;
+    if (target?.providerInstanceId === "codex") {
+      const repo = repoRoot(input.cwd ?? process.cwd());
+      const project = projectHooks(repo);
+      const loaded = async () => {
+        const hooks = await listHooks(repo, project.source);
+        if (hooks.length !== project.keys.length || project.keys.some((key) => !hooks.some((hook) => hook.key === key)))
+          throw new Error(`Codex did not load all project hooks from ${project.source}. ${project.remediation}`);
+        return hooks;
+      };
+      const pending = toApprove(await loaded(), project.source);
+      if (project.canApprove && pending.length > 0) {
+        project.checkApprovalSource();
         const state = Object.fromEntries(pending.map((hook) => [hook.key, { trusted_hash: hook.currentHash }]));
         await codex("config/value/write", { keyPath: "hooks.state", mergeStrategy: "upsert", value: state });
       }
-      const bad = unrunnable(await listHooks(repo));
-      if (bad.length > 0) deny(`Codex would still skip these life-ai hooks:\n${bad.join("\n")}\nTell the user.`);
-    } catch (error) {
-      deny(`Couldn't confirm Codex runs life-ai's hooks (${String(error)}). Tell the user.`);
+      const verified = await loaded();
+      if (
+        project.canApprove &&
+        pending.some(
+          (approved) =>
+            !verified.some((hook) => hook.key === approved.key && hook.currentHash === approved.currentHash),
+        )
+      )
+        throw new Error("Codex hook hash changed during approval; review the primary hooks and retry.");
+      const bad = unrunnable(verified);
+      if (bad.length > 0)
+        deny(`Codex would still skip these life-ai hooks:\n${bad.join("\n")}\n${project.remediation}`);
+      else if (project.warning)
+        console.log(
+          JSON.stringify({
+            systemMessage: project.warning,
+            hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: project.warning },
+          }),
+        );
     }
+  } catch (error) {
+    deny(`Couldn't confirm Codex runs life-ai's hooks (${String(error)}). Tell the user.`);
   }
 }

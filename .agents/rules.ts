@@ -2,7 +2,7 @@ type Route =
   | {
       kind: "hook";
       file: `.agents/${string}.ts`;
-      event: "SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop";
+      event: "SessionStart" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "Stop" | "PreCompact";
       // Tool names differ per agent; the check proves each config's matcher fires on these.
       tools: { claude: string[]; codex: string[] };
     }
@@ -18,7 +18,7 @@ Neon holds records and personal prose, R2 holds originals, this repository holds
 
 Use short, plain answers, visual explanations, existing tools and lean TypeScript. Platform features come first. Account tasks are ready plans with live walkthroughs.
 
-.claude/skills/wiki owns knowledge maintenance; sunday owns family check-ins; lab owns building, research and tool choices. docs/skill-map.md is a catalog. Hooks deliver context on events; checks validate routes. .agents/rules.ts is the rule source and AGENTS.md is generated.`;
+.agents/skills is the canonical skill folder. .agents/skills/wiki owns knowledge maintenance; sunday owns family check-ins; lab owns building, research and tool choices. docs/skill-map.md is a catalog. Hooks deliver context on events; checks validate routes. .agents/rules.ts is the rule source and AGENTS.md is generated.`;
 
 export const RULES: Rule[] = [
   {
@@ -35,13 +35,13 @@ export const RULES: Rule[] = [
   },
   {
     id: "instruction-writes",
-    rule: "Direct writes to generated instructions and agent memory are blocked by the permissions.deny list in .claude/settings.json, enforced natively by Claude and Grok and by this hook for every agent's file edits. Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write.",
+    rule: "Agents' normal edits to instruction files and agent memory are blocked: by permissions.deny in .claude/settings.json natively for Claude and Grok (shell included), and by this hook for every agent's file-edit tools. Other agents' shell and interpreter writes are out of scope; CI's AGENTS.md drift check is the wall. Add an entry in .agents/rules.ts with trigger and a hook or check route, then run node .agents/scripts/rules.ts --write.",
     trigger: "instruction or memory write",
     route: {
       kind: "hook",
       file: ".agents/hooks/rule-guard.ts",
       event: "PreToolUse",
-      tools: { claude: ["Write", "Edit", "MultiEdit"], codex: ["apply_patch", "Bash"] },
+      tools: { claude: ["Write", "Edit", "MultiEdit"], codex: ["apply_patch"] },
     },
   },
   {
@@ -95,7 +95,7 @@ export const RULES: Rule[] = [
       tools: { claude: ["Edit", "Write"], codex: ["apply_patch"] },
     },
     inject: "**/*.ts",
-    context: ".claude/skills/lab/SKILL.md",
+    context: ".agents/skills/lab/SKILL.md",
   },
   {
     id: "wiki-context",
@@ -108,7 +108,40 @@ export const RULES: Rule[] = [
       tools: { claude: ["Edit", "Write", "Bash"], codex: ["apply_patch", "Bash", "exec_command"] },
     },
     inject: "~/.life-ai/pages/**/*.md",
-    context: ".claude/skills/wiki/SKILL.md",
+    context: ".agents/skills/wiki/SKILL.md",
+  },
+  {
+    id: "orchestrator-registration",
+    rule: "Persist coordinator opt-in from the first native UserPromptSubmit prompt per provider session. Later prompts and workers cannot opt in.",
+    trigger: "first native user prompt",
+    route: {
+      kind: "hook",
+      file: ".agents/hooks/orchestrator-rotation.ts",
+      event: "UserPromptSubmit",
+      tools: { claude: [], codex: [] },
+    },
+  },
+  {
+    id: "orchestrator-rotation",
+    rule: "Only first-prompt opted-in orchestrators receive rotation instructions. Save private handoffs through pages.ts, recover active jobs without restarting them, and launch successors only with current user/session authority. Leave pins and retiring threads unchanged.",
+    trigger: "coordinator stop",
+    route: {
+      kind: "hook",
+      file: ".agents/hooks/orchestrator-rotation.ts",
+      event: "Stop",
+      tools: { claude: [], codex: [] },
+    },
+  },
+  {
+    id: "orchestrator-compaction",
+    rule: "Preserve automatic coordinator compaction with Claude summary instructions or a validated private Codex store snapshot. Manual compaction and workers remain unaffected. Model-specific proactive thresholds require explicit configuration.",
+    trigger: "automatic coordinator compaction",
+    route: {
+      kind: "hook",
+      file: ".agents/hooks/orchestrator-rotation.ts",
+      event: "PreCompact",
+      tools: { claude: [], codex: [] },
+    },
   },
   {
     id: "codex-trust",

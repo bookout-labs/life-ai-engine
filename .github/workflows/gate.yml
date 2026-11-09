@@ -60,17 +60,79 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: No secrets in this PR's commits
+      - name: Install pinned gitleaks
         if: github.event_name == 'pull_request_target'
         env:
           V: 8.30.1
           PR: ${{ github.event.pull_request.number }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           git fetch --no-tags origin "pull/$PR/head"
           base=https://github.com/gitleaks/gitleaks/releases/download/v$V
           curl -sSfLO $base/gitleaks_${V}_linux_x64.tar.gz -O $base/gitleaks_${V}_checksums.txt
           grep " gitleaks_${V}_linux_x64.tar.gz$" gitleaks_${V}_checksums.txt | sha256sum -c -
           tar xzf gitleaks_${V}_linux_x64.tar.gz gitleaks
-          ./gitleaks git --redact --log-opts="$BASE..$HEAD"
+      - name: Scan added lines without exposing values
+        if: github.event_name == 'pull_request_target'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          # JSON array of exact approved values. Provision [] explicitly when no exceptions are needed.
+          PERSONAL_DATA_ALLOWLIST: ${{ secrets.PERSONAL_DATA_ALLOWLIST }}
+        run: |
+          set +x
+          if ! git rev-parse --verify "$BASE^{commit}" >/dev/null 2>&1 || ! git rev-parse --verify "$HEAD^{commit}" >/dev/null 2>&1; then
+            echo "Secrets scan requires valid commit references."
+            exit 1
+          fi
+          umask 077
+          scan_dir=$(mktemp -d)
+          trap 'rm -rf "$scan_dir"' EXIT
+          export SCAN_DIR="$scan_dir"
+          if ! python3 - <<'PYCONFIG' 2>/dev/null
+          import json, os, pathlib, re
+          root = pathlib.Path(os.environ["SCAN_DIR"])
+          values = json.loads(os.environ["PERSONAL_DATA_ALLOWLIST"])
+          if not isinstance(values, list) or any(not isinstance(v, str) or not v or "\n" in v or "\r" in v for v in values):
+              raise ValueError()
+          config = pathlib.Path(".github/personal-data.toml").read_text()
+          if values:
+              patterns = ["^" + re.sub(r"([\\.^$|?*+(){}\[\]])", r"\\\1", v) + "$" for v in values]
+              config += '\n[[allowlists]]\ntargetRules = ["personal-email", "personal-phone", "personal-ssn"]\nregexTarget = "secret"\nregexes = ' + json.dumps(patterns) + "\n"
+          (root / "personal.toml").write_text(config)
+          (root / "default.toml").write_text("[extend]\nuseDefault = true\n")
+          PYCONFIG
+          then
+            echo "Secrets scan configuration failed. Check the private allowlist."
+            exit 1
+          fi
+          failed=0
+          for config in default personal; do
+            status=0
+            flags=()
+            if [ "$config" = personal ]; then
+              flags=(--ignore-gitleaks-allow)
+            fi
+            ./gitleaks git --config="$scan_dir/$config.toml" --redact=100 \
+              "${flags[@]}" \
+              --log-opts="--remerge-diff $BASE..$HEAD" --exit-code=10 \
+              --report-format=json --report-path="$scan_dir/report.json" \
+              >"$scan_dir/output" 2>&1 || status=$?
+            if [ "$status" != 0 ] && [ "$status" != 10 ]; then
+              echo "Secrets scan failed. Scanner diagnostics withheld."
+              exit 1
+            fi
+            if [ "$status" = 10 ]; then
+              failed=1
+              if ! python3 - <<'PYREPORT' 2>/dev/null
+          import json, os, pathlib
+          findings = json.loads((pathlib.Path(os.environ["SCAN_DIR"]) / "report.json").read_text())
+          for finding in findings:
+              print(json.dumps(finding["File"], ensure_ascii=True) + ":" + str(int(finding["StartLine"])))
+          PYREPORT
+              then
+                echo "Secrets report failed. Diagnostics withheld."
+                exit 1
+              fi
+            fi
+          done
+          exit "$failed"

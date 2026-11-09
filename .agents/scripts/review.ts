@@ -153,13 +153,17 @@ export async function codexReview(repo: string, pr: number, sha: string, deadlin
     }
     if (unresolved === false) return { summary: "Codex review completed", findings: [] };
     const findings: Finding[] = mine
-      ? list<InlineComment>(`repos/${repo}/pulls/${pr}/reviews/${mine.id}/comments`).map((c) => ({
-          priority: /\[P0\]/.test(c.body) ? 0 : 1,
-          title: c.body.split("\n")[0]?.slice(0, 120) ?? "Codex finding",
-          file: c.path,
-          line: c.line ?? 0,
-          body: c.body,
-        }))
+      ? list<InlineComment>(`repos/${repo}/pulls/${pr}/reviews/${mine.id}/comments`).map((c) => {
+          const head = c.body.split("\n")[0] ?? "";
+          return {
+            // Only the heading carries priority; quoted code below it must not downgrade an unmarked P1.
+            priority: Number(/\/badge\/P([0-3])\b/.exec(head)?.[1] ?? /\[P([0-3])\]/.exec(head)?.[1] ?? 1),
+            title: head.slice(0, 120) || "Codex finding",
+            file: c.path,
+            line: c.line ?? 0,
+            body: c.body,
+          };
+        })
       : [];
     if (unresolved === true && findings.length === 0) {
       findings.push({

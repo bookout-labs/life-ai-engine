@@ -59,6 +59,7 @@ CREATE TABLE public.charges (
     amount numeric(10,2) NOT NULL,
     amount_is_estimate boolean DEFAULT false NOT NULL,
     paid_on date,
+    source_ref text,
     CONSTRAINT charges_amount_check CHECK ((amount >= (0)::numeric))
 );
 
@@ -117,8 +118,10 @@ CREATE TABLE public.events (
     starts_at timestamp with time zone NOT NULL,
     ends_at timestamp with time zone,
     location text,
+    cancelled boolean DEFAULT false NOT NULL,
     CONSTRAINT events_check CHECK ((ends_at > starts_at)),
-    CONSTRAINT events_kind_check CHECK ((kind = lower(kind)))
+    CONSTRAINT events_kind_check CHECK ((kind = lower(kind))),
+    CONSTRAINT events_kind_not_status CHECK ((kind <> 'cancelled'::text))
 );
 
 
@@ -398,6 +401,14 @@ ALTER TABLE ONLY public.charges
 
 
 --
+-- Name: charges charges_source_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.charges
+    ADD CONSTRAINT charges_source_ref_key UNIQUE (source_ref);
+
+
+--
 -- Name: deadlines deadlines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -651,4 +662,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261108180000'),
     ('20261108230000'),
     ('20261109120000'),
-    ('20261109130000');
+    ('20261109130000'),
+    ('20261109180000');

@@ -1,0 +1,17 @@
+# The default secrets scan runs separately so its global path allowlists cannot exempt personal data.
+minVersion = "v8.30.1"
+
+[[rules]]
+id = "personal-email"
+description = "Email address shape"
+regex = '''(?i)[a-z0-9._%+-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.(?:xn--[a-z0-9-]*[a-z0-9]|[a-z]{2,})'''
+
+[[rules]]
+id = "personal-phone"
+description = "North American phone number shape"
+regex = '''(?:\+?1[ .-]?)?(?:\([2-9][0-9]{2}\)[ .-]?|\b[2-9][0-9]{2}[ .-]?)[2-9][0-9]{2}[ .-]?[0-9]{4}\b'''
+
+[[rules]]
+id = "personal-ssn"
+description = "Social Security number shape, including synthetic examples"
+regex = '''\b[0-9]{3}[- ]?[0-9]{2}[- ]?[0-9]{4}\b'''

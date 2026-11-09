@@ -1,0 +1,157 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { weeklyWindow } from "../../packages/core/weekly.ts";
+
+test("weekly windows span seven calendar dates across year and leap boundaries", () => {
+  assert.deepEqual(weeklyWindow("2026-12-28"), {
+    from: "2026-12-28",
+    through: "2027-01-03",
+    deadlinesThrough: "2027-01-10",
+    timeZone: "America/Chicago",
+  });
+  assert.equal(weeklyWindow("2028-02-28").through, "2028-03-05");
+  assert.throws(() => weeklyWindow("2026-02-30"));
+});
+
+test("weekly command returns explicit empty collections and record-backed preparation", {
+  skip: !process.env.WEEKLY_TEST_DATABASE_URL,
+}, async (t) => {
+  const { Client } = await import("pg");
+  const { readFile } = await import("node:fs/promises");
+  const { runWeekly } = await import("./weekly.ts");
+  const client = new Client({ connectionString: process.env.WEEKLY_TEST_DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query("begin");
+    const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
+    for (const table of [
+      "members",
+      "relationships",
+      "activities",
+      "events",
+      "obligations",
+      "charges",
+      "deadlines",
+      "loans",
+      "loan_balances",
+    ]) {
+      const definition = schema.match(new RegExp(`CREATE TABLE public\\.${table} \\([\\s\\S]*?\\n\\);`))?.[0];
+      assert.ok(definition);
+      await client.query(definition.replace(`CREATE TABLE public.${table}`, `CREATE TEMP TABLE ${table}`));
+    }
+    const result = JSON.parse(await runWeekly(client, ["2026-11-09"]));
+    for (const key of [
+      "members",
+      "relationships",
+      "activities",
+      "events",
+      "bills",
+      "deadlines",
+      "loans",
+      "undatedDeadlines",
+      "unscheduledObligations",
+    ]) {
+      assert.deepEqual(result[key], []);
+    }
+    assert.ok(result.unavailable.includes("spending and budget actuals"));
+    await client.query(`
+      insert into members (id, first_name) values (1, 'Fixture adult'), (2, 'Fixture child');
+      insert into relationships values (1, 2, 'parent');
+      insert into activities (id, member_id, activity, season_start, season_end) values
+        (1, 2, 'fixture sport', '2026-01-01', null),
+        (2, 1, 'ended sport', '2026-01-01', '2026-10-31'),
+        (3, 1, 'future sport', '2026-11-09', null);
+      insert into events (id, activity_id, kind, starts_at) values
+        (1, 1, 'practice', '2026-11-02 00:00 America/Chicago'),
+        (2, 1, 'game', '2026-11-08 23:59 America/Chicago'),
+        (3, 1, 'practice', '2026-11-09 00:00 America/Chicago'),
+        (5, 1, 'practice', '2026-11-01 23:59 America/Chicago'),
+        (6, 1, 'practice', '2026-11-01 01:30-05'),
+        (7, 1, 'practice', '2026-11-01 01:30-06');
+      insert into events (id, activity_id, kind, starts_at, cancelled) values
+        (4, 1, 'practice', '2026-11-03 12:00 America/Chicago', true);
+      insert into obligations (id, name, kind, cadence, due_day) values
+        (1, 'Fixture bill', 'bill', 'monthly', 2),
+        (2, 'Fixture paid', 'bill', 'monthly', 3),
+        (3, 'Fixture debt', 'loan', 'monthly', 20),
+        (4, 'Fixture unknown', 'bill', 'monthly', null),
+        (5, 'Fixture month end', 'bill', 'monthly', 31);
+      insert into charges (id, obligation_id, due_on, amount, paid_on) values
+        (1, 1, '2026-10-02', 10.25, null),
+        (2, 1, '2026-11-02', 12.50, null),
+        (3, 2, '2026-11-03', 5, '2026-11-01');
+      insert into deadlines (id, item, action, due_on, done_on) values
+        (1, 'Overdue', 'Review', '2026-10-01', null),
+        (2, 'Final day', 'Review', '2026-11-15', null),
+        (3, 'Outside', 'Review', '2026-11-16', null),
+        (4, 'Done', 'Review', '2026-11-04', '2026-11-01'),
+        (5, 'Undated', 'Confirm date', null, null);
+      insert into loans (obligation_id, lender) values (3, 'Fixture lender');
+      insert into loan_balances values (3, '2026-10-01', 200), (3, '2026-11-02', 150), (3, '2026-11-03', 100);
+    `);
+    const populated = JSON.parse(await runWeekly(client, ["2026-11-02"]));
+    assert.equal(populated.members.length, 2);
+    assert.deepEqual(populated.relationships, [{ member_id: "1", related_id: "2", kind: "parent" }]);
+    assert.deepEqual(
+      populated.activities.map((a: { activity: string }) => a.activity),
+      ["fixture sport"],
+    );
+    assert.deepEqual(
+      populated.events.map((e: { day: string }) => e.day),
+      ["Mon Nov 02", "Sun Nov 08"],
+    );
+    assert.deepEqual(populated.bills, [
+      {
+        day: "Mon Nov 02",
+        name: "Fixture bill",
+        pays_from: null,
+        day_is_estimate: false,
+        amount: "12.50",
+        amount_is_estimate: false,
+      },
+    ]);
+    assert.deepEqual(
+      populated.deadlines.map((d: { item: string; overdue: boolean }) => [d.item, d.overdue]),
+      [
+        ["Overdue", true],
+        ["Final day", false],
+      ],
+    );
+    assert.deepEqual(populated.undatedDeadlines, [{ item: "Undated", action: "Confirm date" }]);
+    assert.deepEqual(populated.unscheduledObligations, [{ name: "Fixture unknown", kind: "bill" }]);
+    assert.deepEqual(populated.loans, [
+      {
+        obligation_id: "3",
+        name: "Fixture debt",
+        lender: "Fixture lender",
+        apr_percent: null,
+        balance: "150.00",
+        balance_as_of: "2026-11-02",
+      },
+    ]);
+    const dstWeek = JSON.parse(await runWeekly(client, ["2026-10-26"]));
+    assert.equal(dstWeek.events.length, 3);
+    assert.deepEqual(
+      dstWeek.events.map((e: { day: string }) => e.day),
+      ["Sun Nov 01", "Sun Nov 01", "Sun Nov 01"],
+    );
+    t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-08T18:00:00Z") });
+    assert.equal(JSON.parse(await runWeekly(client, [])).window.from, "2026-11-09");
+    t.mock.timers.setTime(new Date("2026-11-09T18:00:00Z").valueOf());
+    assert.equal(JSON.parse(await runWeekly(client, [])).window.from, "2026-11-09");
+    t.mock.timers.setTime(new Date("2026-11-10T18:00:00Z").valueOf());
+    assert.equal(JSON.parse(await runWeekly(client, [])).window.from, "2026-11-16");
+    t.mock.timers.reset();
+    const monthEnd = JSON.parse(await runWeekly(client, ["2026-11-30"]));
+    assert.equal(monthEnd.bills[0].day, "Mon Nov 30");
+    assert.equal(monthEnd.bills[0].amount, null);
+    assert.equal(monthEnd.bills[1].amount, "12.50");
+    await client.query("delete from loan_balances");
+    assert.equal(JSON.parse(await runWeekly(client, ["2026-11-02"])).loans[0].balance, null);
+    await assert.rejects(runWeekly(client, ["2026-02-30"]));
+    await assert.rejects(runWeekly(client, ["2026-11-02", "extra"]));
+  } finally {
+    await client.query("rollback");
+    await client.end();
+  }
+});

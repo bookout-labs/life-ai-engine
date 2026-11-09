@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type TestContext, test } from "node:test";
@@ -40,6 +40,15 @@ ${readFileSync(join(repo, ".agents/scripts/proof.ts"), "utf8")}`,
   put("docs/note.md", "original\n");
   put("docs/deleted.md", "original\n");
   put("other.md", "unrelated\n");
+  put(".agents/skills/lab/SKILL.md", "original\n");
+  put(".agents/skills/lab/nested/note.md", "original\n");
+  put(".agents/other/note.md", "original\n");
+  mkdirSync(join(repo, ".claude"));
+  symlinkSync("../.agents/skills", join(repo, ".claude/skills"));
+  mkdirSync(join(dir, "outside"));
+  writeFileSync(join(dir, "outside/note.md"), "original\n");
+  symlinkSync("../outside", join(repo, "external"));
+  symlinkSync("../../outside", join(repo, ".claude/external"));
   git("init", "-b", "main");
   git("config", "user.name", "Save test");
   git("config", "user.email", "save@example.invalid");
@@ -97,12 +106,12 @@ ${readFileSync(join(repo, ".agents/scripts/proof.ts"), "utf8")}`,
   mkdirSync(join(home, ".config/life-ai"), { recursive: true });
   writeFileSync(join(home, ".config/life-ai/app.pem"), "fixture");
   writeFileSync(join(home, ".config/life-ai/personal-terms"), "synthetic-private-marker");
-  const run = (extra: Record<string, string> = {}, ...args: string[]) =>
+  const runFrom = (cwd: string, extra: Record<string, string>, ...args: string[]) =>
     spawnSync(
       process.execPath,
       [join(repo, ".agents/scripts/save.ts"), "--work", "LAB.1.93", "-m", "fixture", ...args],
       {
-        cwd: repo,
+        cwd,
         encoding: "utf8",
         timeout: 20_000,
         env: {
@@ -115,7 +124,8 @@ ${readFileSync(join(repo, ".agents/scripts/proof.ts"), "utf8")}`,
         },
       },
     );
-  return { dir, repo, put, git, run };
+  const run = (extra: Record<string, string> = {}, ...args: string[]) => runFrom(repo, extra, ...args);
+  return { dir, repo, put, git, run, runFrom };
 }
 
 const args = ["--issue", "96", "--proof", "Synthetic production smoke"];
@@ -246,4 +256,153 @@ test("merge wait ignores superseded failed and canceled runs", async () => {
       },
     },
   );
+});
+
+for (const target of ["../.agents/other", "../missing", "../../outside"]) {
+  test(`saves retargeted alias to ${target}`, (t) => {
+    const f = fixture(t);
+    rmSync(join(f.repo, ".claude/skills"));
+    symlinkSync(target, join(f.repo, ".claude/skills"));
+    const result = f.run({}, ".claude/skills");
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /proof|issue/i);
+    assert.equal(f.git("show", ":.claude/skills"), target, result.stderr);
+    assert.equal(f.git("diff", "--cached", "--name-status"), "M\t.claude/skills", result.stderr);
+  });
+}
+
+test("saves a retargeted alias and edits under its new target together", (t) => {
+  const f = fixture(t);
+  rmSync(join(f.repo, ".claude/skills"));
+  symlinkSync("../docs", join(f.repo, ".claude/skills"));
+  f.put("docs/note.md", "edited\n");
+  const result = f.run({}, ".claude/skills");
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /proof|issue/i);
+  assert.equal(f.git("diff", "--cached", "--name-status"), "M\t.claude/skills\nM\tdocs/note.md", result.stderr);
+  assert.equal(f.git("show", ":docs/note.md"), "edited", result.stderr);
+});
+
+test("saves a tracked external link without staging its external target", (t) => {
+  const f = fixture(t);
+  rmSync(join(f.repo, ".claude/external"));
+  symlinkSync("../../outside/note.md", join(f.repo, ".claude/external"));
+  writeFileSync(join(f.dir, "outside/note.md"), "external edit\n");
+  const result = f.run({}, ".claude/external");
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /proof|issue/i);
+  assert.equal(f.git("diff", "--cached", "--name-status"), "M\t.claude/external", result.stderr);
+  assert.equal(f.git("show", ":.claude/external"), "../../outside/note.md", result.stderr);
+});
+
+for (const path of [
+  ".claude/skills/lab/SKILL.md",
+  ".claude/skills",
+  ".claude/skills/",
+  ".claude/skills/lab/",
+  ".agents/skills/lab/SKILL.md",
+  ".",
+]) {
+  test(`saves an edit named through ${path}`, (t) => {
+    const f = fixture(t);
+    f.put(".agents/skills/lab/SKILL.md", "edited\n");
+    f.put("docs/note.md", "unrelated edit\n");
+    const endToEnd = path === ".claude/skills/lab/SKILL.md";
+    const result = f.run({}, path, ...(endToEnd ? [...args, "--no-wait"] : []));
+    assert.equal(result.status, endToEnd ? 0 : 1, result.stderr);
+    if (endToEnd) {
+      assert.equal(f.git("show", "HEAD:.agents/skills/lab/SKILL.md"), "edited");
+      return;
+    }
+    assert.match(result.stderr, /proof|issue/i);
+    assert.equal(f.git("show", ":.agents/skills/lab/SKILL.md"), "edited", result.stderr);
+    assert.equal(
+      f.git("diff", "--cached", "--name-only"),
+      path === "." ? ".agents/skills/lab/SKILL.md\ndocs/note.md" : ".agents/skills/lab/SKILL.md",
+      result.stderr,
+    );
+  });
+}
+
+test("saves a new file through an absolute alias path", (t) => {
+  const f = fixture(t);
+  f.put(".agents/skills/lab/new.md", "new\n");
+  const result = f.run({}, join(f.repo, ".claude/skills/lab/new.md"));
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /proof|issue/i);
+  assert.equal(f.git("diff", "--cached", "--name-status"), "A\t.agents/skills/lab/new.md", result.stderr);
+});
+
+for (const [deleted, path, expected] of [
+  [".agents/skills/lab/SKILL.md", ".claude/skills/lab/SKILL.md", "D\t.agents/skills/lab/SKILL.md"],
+  [".agents/skills/lab", ".claude/skills/lab", "D\t.agents/skills/lab/SKILL.md\nD\t.agents/skills/lab/nested/note.md"],
+  [".agents/skills/lab/nested", ".claude/skills/lab/nested/note.md", "D\t.agents/skills/lab/nested/note.md"],
+  [".agents/skills/lab", ".agents/skills/lab/SKILL.md", "D\t.agents/skills/lab/SKILL.md"],
+  [".claude/skills", ".claude/skills", "D\t.claude/skills"],
+] satisfies [string, string, string][]) {
+  test(`saves deletion of ${deleted} named through ${path}`, (t) => {
+    const f = fixture(t);
+    rmSync(join(f.repo, deleted), { recursive: true });
+    const result = f.run({}, path);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /proof|issue/i);
+    assert.equal(f.git("diff", "--cached", "--name-status"), expected, result.stderr);
+  });
+}
+
+test("saves both sides of a rename through the alias", (t) => {
+  const f = fixture(t);
+  f.put(".agents/skills/lab/renamed.md", "original\n");
+  rmSync(join(f.repo, ".agents/skills/lab/SKILL.md"));
+  const result = f.run({}, ".claude/skills/lab/SKILL.md", ".claude/skills/lab/renamed.md");
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /proof|issue/i);
+  assert.equal(
+    f.git("diff", "--cached", "--name-status", "--no-renames"),
+    "D\t.agents/skills/lab/SKILL.md\nA\t.agents/skills/lab/renamed.md",
+    result.stderr,
+  );
+});
+
+for (const path of ["../.claude/skills/lab/SKILL.md", "../.claude/skills", "../docs/note.md", "."]) {
+  test(`saves from a subdirectory with ${path}`, (t) => {
+    const f = fixture(t);
+    const file = path.includes("skills") ? ".agents/skills/lab/SKILL.md" : "docs/note.md";
+    f.put(file, "edited\n");
+    const result = f.runFrom(join(f.repo, "docs"), {}, path);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /proof|issue/i);
+    assert.equal(f.git("show", `:${file}`), "edited", result.stderr);
+    assert.equal(f.git("diff", "--cached", "--name-only"), file, result.stderr);
+  });
+}
+
+for (const path of ["external/note.md", "../../x"]) {
+  test(`refuses ${path} before staging any named file`, (t) => {
+    const f = fixture(t);
+    f.put("docs/note.md", "edited\n");
+    const result = f.run({}, "docs/note.md", path, ...args, "--no-wait");
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /save: .*outside.*repository/i);
+    assert.equal(f.git("diff", "--cached", "--name-only"), "", result.stderr);
+  });
+}
+
+test("unchanged tracked symlink loop has nothing to save", (t) => {
+  const f = fixture(t);
+  symlinkSync("loop", join(f.repo, "loop"));
+  f.git("add", "loop");
+  f.git("commit", "-m", "loop");
+  const result = f.run({}, "loop");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Nothing to save/);
+});
+
+test("ancestor symlink stages only the link", (t) => {
+  const f = fixture(t);
+  symlinkSync("..", join(f.repo, ".claude/root"));
+  f.put("docs/note.md", "unrelated edit\n");
+  const result = f.run({}, ".claude/root");
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(f.git("diff", "--cached", "--name-status"), "A\t.claude/root");
 });

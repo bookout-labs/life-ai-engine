@@ -1,18 +1,13 @@
 // Shared by turn-start.ts and stop-check.ts.
 import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 export type Snapshot = Record<string, number>; // path -> mtime, 0 if deleted
 
 // From the hook's cwd, never CLAUDE_PROJECT_DIR, which a parent agent can leak into a worktree subagent.
 export function repoRoot(cwd: string): string {
   return git(cwd, "--show-toplevel");
-}
-
-// The main checkout a worktree belongs to; Codex reads project hooks from there.
-export function mainRoot(cwd: string): string {
-  return dirname(git(cwd, "--git-common-dir"));
 }
 
 function git(cwd: string, flag: string): string {
