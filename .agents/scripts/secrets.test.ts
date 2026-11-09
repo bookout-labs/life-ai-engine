@@ -17,7 +17,9 @@ const workflow = z
 const scan = workflow.jobs.secrets.steps.find((step) => step.name === "Scan added lines without exposing values")?.run;
 const binary = process.env.GITLEAKS_TEST_BINARY;
 
-test("pinned gitleaks scans additions with private exact exceptions and safe diagnostics", { skip: !binary }, () => {
+test("pinned gitleaks scans additions with private exact exceptions and safe diagnostics", {
+  skip: !binary && !process.env.CI,
+}, () => {
   assert.ok(scan, "workflow scan step exists");
   assert.ok(binary);
   assert.equal(spawnSync(binary, ["version"], { encoding: "utf8" }).stdout.trim(), "8.30.1");
@@ -60,7 +62,7 @@ test("pinned gitleaks scans additions with private exact exceptions and safe dia
     const removed = commit("ordinary\n");
     assert.equal(run(contextOnly, removed).status, 0);
     assert.equal(run(base, removed).status, 1, "addition remains refused after later removal");
-    const normal = commit("changed\n");
+    const normal = commit(`changed\n${["pkg", "1.2.3"].join("@")}\n`);
     assert.equal(run(removed, normal).status, 0);
     for (const text of [
       ["000", "12", "3456"].join(" "),
