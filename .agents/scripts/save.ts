@@ -15,6 +15,7 @@ const { values, positionals } = parseArgs({
     agent: { type: "string" },
     proof: { type: "string" },
     issue: { type: "string" },
+    regroup: { type: "string" },
     "no-wait": { type: "boolean", default: false },
   },
 });
@@ -25,6 +26,22 @@ function fail(why: string): never {
 }
 const git = (...args: string[]): string =>
   execFileSync("git", args, { encoding: "utf8", stdio: "pipe", maxBuffer: 1 << 28 }).trim();
+
+const APP = { id: "5673796", installation: "180008533", key: join(homedir(), ".config", "life-ai", "app.pem") };
+const tokenArgs = ["token", "generate", "--app-id", APP.id, "--installation-id", APP.installation, "--key", APP.key];
+const token: string = execFileSync("gh", [...tokenArgs, "--token-only"], { encoding: "utf8", stdio: "pipe" }).trim();
+const gh = (...args: string[]): string =>
+  execFileSync("gh", args, { encoding: "utf8", stdio: "pipe", env: { ...process.env, GH_TOKEN: token } }).trim();
+
+// After three blocked rounds the agent regroups itself: the App posts it, and the gate counts the App's Regroup.
+if (values.regroup) {
+  if (!values.issue || !/^[1-9]\d*$/.test(values.issue)) fail("--regroup needs --issue <n>");
+  const text = `Regroup: ${values.regroup}`;
+  if (leaks([text])) fail("The regroup text matches the personal-term list.");
+  gh("issue", "comment", values.issue, "-R", "bookout-labs/life-ai-engine", "--body", text);
+  console.log(`Regrouped #${values.issue}`);
+  if (positionals.length === 0) process.exit(0);
+}
 
 const work: string = values.work ?? "";
 const message: string = values.message ?? "";
@@ -97,12 +114,6 @@ try {
 git("commit", "-m", `${message}\n\n${trailers}`);
 git("push", "-u", "origin", branch);
 console.log(`1/3 pushed ${branch}`);
-
-const APP = { id: "5673796", installation: "180008533", key: join(homedir(), ".config", "life-ai", "app.pem") };
-const tokenArgs = ["token", "generate", "--app-id", APP.id, "--installation-id", APP.installation, "--key", APP.key];
-const token: string = execFileSync("gh", [...tokenArgs, "--token-only"], { encoding: "utf8", stdio: "pipe" }).trim();
-const gh = (...args: string[]): string =>
-  execFileSync("gh", args, { encoding: "utf8", stdio: "pipe", env: { ...process.env, GH_TOKEN: token } }).trim();
 
 // A failed save leaves its PR open with auto-merge on; the next save from this branch refreshes it instead of opening another.
 let pr: string = gh(
