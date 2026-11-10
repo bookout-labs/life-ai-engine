@@ -8,6 +8,7 @@ import { listUpkeep, logUpkeepCompletion, upkeepDue } from "./upkeep.ts";
 test("upkeep derives monthly dates and preserves unknown history", {
   skip: !process.env.UPKEEP_TEST_DATABASE_URL,
 }, async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2042-01-01T12:00:00Z") });
   const db = new pg.Client({ connectionString: process.env.UPKEEP_TEST_DATABASE_URL });
   await db.connect();
   const namespace = `upkeep_test_${randomUUID().replaceAll("-", "")}`;
@@ -156,6 +157,37 @@ test("upkeep derives monthly dates and preserves unknown history", {
       assert.equal((await listUpkeep(db, "2040-12-01")).find((t) => t.id === quarterly.id)?.next_due_on, "2041-02-28");
       await logUpkeepCompletion(db, { request_id: randomUUID(), task_id: task.id, completed_on: "2040-01-31" });
       assert.equal((await listUpkeep(db, "2040-02-01")).find((t) => t.id === task.id)?.next_due_on, "2040-02-29");
+    });
+    await t.test("yearly completions use the nearest occurrence and IDs sort numerically", async () => {
+      await db.query("truncate upkeep_tasks cascade");
+      for (const [month, day, done, expected] of [
+        [12, 15, "2027-01-03", "2027-12-15"],
+        [1, 5, "2026-12-20", "2028-01-05"],
+        [1, 1, "2025-07-02", "2026-01-01"],
+        [2, 29, "2024-02-29", "2025-02-28"],
+        [2, 29, "2025-02-28", "2026-02-28"],
+      ] as const) {
+        const {
+          rows: [task],
+        } = await db.query(
+          "insert into upkeep_tasks (name, category, yearly_month, yearly_day) values ('Synthetic', 'home', $1, $2) returning id::text",
+          [month, day],
+        );
+        await logUpkeepCompletion(db, { request_id: randomUUID(), task_id: task.id, completed_on: done });
+        assert.equal((await listUpkeep(db, "2030-01-01")).find((item) => item.id === task.id)?.next_due_on, expected);
+      }
+      await db.query("truncate upkeep_tasks cascade");
+      for (let i = 0; i < 11; i++)
+        await db.query("insert into upkeep_tasks (name, category, interval_months) values ('Synthetic', 'home', 1)");
+      const ids = (await listUpkeep(db, "2030-01-01")).map((item) => BigInt(item.id));
+      assert.deepEqual(
+        ids,
+        [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+      );
+      await assert.rejects(
+        logUpkeepCompletion(db, { request_id: randomUUID(), task_id: String(ids[0]), completed_on: "2043-01-01" }),
+        /future|today/i,
+      );
     });
     await db.query(down);
     await db.query(up);
