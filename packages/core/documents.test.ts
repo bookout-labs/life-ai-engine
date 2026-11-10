@@ -24,16 +24,70 @@ test("documents check tracks essential household papers through idempotent write
       "create table members (id bigint primary key, first_name text, goes_by text, born date, species text); create table files (key text primary key)",
     );
     await db.query(up);
+    const ownershipMigration = await readFile(
+      new URL("../../db/migrations/20261111010000_document_ownership.sql", import.meta.url),
+      "utf8",
+    );
+    const [ownershipUp, ownershipDown] = ownershipMigration.split("-- migrate:down");
+    assert.ok(ownershipUp && ownershipDown);
+    await db.query(ownershipUp);
     await db.query(`insert into members values
       (1, 'Synthetic adult A', null, '2000-01-01', 'human'), (2, 'Synthetic adult B', null, '2001-01-01', 'human'),
       (3, 'Synthetic minor A', null, '2030-01-01', 'human'), (4, 'Synthetic minor B', null, '2031-01-01', 'human')`);
     const empty = await documentsCheck(db, { as_of: "2040-01-01" });
     assert.equal(empty.requirements.length, 17);
     assert.equal(empty.counts.missing, 17);
+    for (const member of ["1", "2"])
+      assert.equal(
+        empty.requirements.filter(
+          (r) =>
+            r.member_id === member &&
+            ["will", "durable_power_of_attorney", "healthcare_directive", "life_insurance"].includes(r.kind),
+        ).length,
+        4,
+      );
+    assert.equal(empty.requirements.filter((r) => r.kind === "guardianship").length, 1);
+    for (const member of ["1", "2", "3", "4"])
+      assert.equal(
+        empty.requirements.filter(
+          (r) => r.member_id === member && ["birth_certificate", "social_security_card"].includes(r.kind),
+        ).length,
+        2,
+      );
     assert.deepEqual(
       empty.requirements.filter((r) => r.kind === "will").map((r) => r.member_id),
       ["1", "2"],
     );
+    for (const kind of ["social_security_card", "will"] as const) {
+      await t.test(`${kind} requires a member`, async () => {
+        await assert.rejects(
+          recordDocument(db, { request_id: randomUUID(), kind }),
+          /member_id is required for personal papers/,
+        );
+        const check = await documentsCheck(db, { as_of: "2040-01-01" });
+        assert.deepEqual(
+          check.requirements.filter((r) => r.kind === "social_security_card").map((r) => r.status),
+          ["missing", "missing", "missing", "missing"],
+        );
+      });
+    }
+    await t.test("guardianship cannot belong to a member", async () => {
+      await assert.rejects(
+        recordDocument(db, { request_id: randomUUID(), kind: "guardianship", member_id: "1" }),
+        /guardianship must have a null or omitted member_id/,
+      );
+    });
+    await t.test("non-human papers are rejected", async () => {
+      await db.query("insert into members values (9, 'Synthetic pet', null, null, 'dog')");
+      try {
+        await assert.rejects(
+          recordDocument(db, { request_id: randomUUID(), kind: "will", member_id: "9" }),
+          /Documents can only be recorded for human members/,
+        );
+      } finally {
+        await db.query("delete from documents where member_id = 9; delete from members where id = 9");
+      }
+    });
     const command = { request_id: randomUUID(), kind: "will", member_id: "1", location: "Synthetic cabinet" } as const;
     const saved = await recordDocument(db, command);
     assert.equal(saved.already_existed, false);
@@ -47,6 +101,17 @@ test("documents check tracks essential household papers through idempotent write
     });
     await recordDocument(db, { ...command, request_id: randomUUID(), location: null });
     assert.equal((await documentsCheck(db, { as_of: "2040-01-01" })).counts.location_unknown, 1);
+    await t.test("unknown human ages leave the guardianship need unknown", async () => {
+      await db.query("update members set born = null");
+      const check = await documentsCheck(db, { as_of: "2040-01-01" });
+      assert.equal(check.guardianship_need_unknown, true);
+      assert.equal(check.age_unknown.length, 4);
+      assert.equal(check.requirements.length, 8);
+      await db.query(
+        "update members set born = case id when 1 then '2000-01-01'::date when 2 then '2001-01-01'::date when 3 then '2030-01-01'::date else '2031-01-01'::date end",
+      );
+      assert.equal((await documentsCheck(db, { as_of: "2040-01-01" })).guardianship_need_unknown, false);
+    });
     await t.test("birthday, unknown age and species determine requirements", async () => {
       await db.query(
         "insert into members values (5, 'Synthetic unknown', null, null, 'human'), (6, 'Synthetic pet', null, '2000-01-01', 'dog'), (7, 'Synthetic birthday', null, '2022-06-15', 'human')",
@@ -104,6 +169,10 @@ test("documents check tracks essential household papers through idempotent write
           ["2", "met", 181],
         ],
       );
+      const today = await documentsCheck(db, { as_of: "2039-12-31" });
+      const directive = today.requirements.find((r) => r.kind === "healthcare_directive" && r.member_id === "1");
+      assert.equal(directive?.status, "expiring");
+      assert.equal(directive?.days, 0);
       assert.equal(check.counts.expired, 1);
       assert.equal(check.counts.expiring, 2);
       const insurance = check.requirements.find((r) => r.kind === "life_insurance" && r.member_id === "1");
@@ -204,11 +273,83 @@ test("documents check tracks essential household papers through idempotent write
         code: "23503",
       });
     });
+    await t.test("one human's card never satisfies another human's card", async () => {
+      await recordDocument(db, {
+        request_id: randomUUID(),
+        kind: "social_security_card",
+        member_id: "1",
+        location: "Synthetic",
+      });
+      const check = await documentsCheck(db, { as_of: "2040-01-01" });
+      assert.deepEqual(
+        check.requirements.filter((r) => r.kind === "social_security_card").map((r) => [r.member_id, r.status]),
+        [
+          ["2", "missing"],
+          ["3", "missing"],
+          ["4", "missing"],
+          ["1", "met"],
+        ],
+      );
+    });
+    await db.query("delete from document_requests; delete from documents");
+    await db.query(ownershipDown);
+    await db.query("insert into documents (kind) values ('will')");
+    await db.query("insert into documents (kind, member_id) values ('guardianship', 1)");
+    await assert.rejects(db.query(ownershipUp), { code: "23514" });
+    await db.query("delete from documents");
+    await db.query(ownershipUp);
+    for (const sql of [
+      "insert into documents (kind) values ('will')",
+      "insert into documents (kind) values ('social_security_card')",
+      "insert into documents (kind, member_id) values ('guardianship', 1)",
+    ])
+      await assert.rejects(db.query(sql), { code: "23514" });
+    await db.query(ownershipDown);
     await db.query(down);
     await db.query(up);
+    await db.query(ownershipUp);
+    await db.query(ownershipDown);
     await db.query(down);
   } finally {
     await db.query(`drop schema ${namespace} cascade`);
     await db.end();
   }
+});
+
+test("MCP reports the specific ownership error for a will without a member", {
+  skip: !process.env.DOCUMENTS_TEST_DATABASE_URL,
+}, async () => {
+  const { registerHooks } = await import("node:module");
+  const { createMcpHandler } = await import("@modelcontextprotocol/server");
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "cloudflare:workers")
+        return {
+          url: 'data:text/javascript,export const env = {PUBLIC_ORIGIN: "https://synthetic.test"}; export class WorkerEntrypoint {}',
+          shortCircuit: true,
+        };
+      return nextResolve(specifier, context);
+    },
+  });
+  const { tools } = await import(new URL("../../apps/mcp/worker.ts", import.meta.url).href);
+  hooks.deregister();
+  const response = await createMcpHandler(() =>
+    tools({ HYPERDRIVE: { connectionString: process.env.DOCUMENTS_TEST_DATABASE_URL } } as never),
+  ).fetch(
+    new Request("https://synthetic.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "record_document", arguments: { request_id: randomUUID(), kind: "will" } },
+      }),
+    }),
+  );
+  const text = await response.text();
+  const payload = JSON.parse(text.startsWith("{") ? text : (text.match(/^data: (.*)$/m)?.[1] ?? ""));
+  assert.equal(payload.result.isError, true);
+  assert.match(payload.result.content[0].text, /member_id is required for personal papers/);
+  assert.doesNotMatch(payload.result.content[0].text, /Could not save the record/);
 });
