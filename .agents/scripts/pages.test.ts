@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +19,6 @@ import {
   pageWrite,
   slugSchema,
 } from "../../packages/core/pages.ts";
-import { temporarySchema } from "../../packages/core/test-schema.ts";
 import { resolveLink, slugFor } from "../../packages/core/wiki-links.ts";
 import { getFile, putFile } from "./files.ts";
 import { runPages } from "./pages.ts";
@@ -38,10 +38,18 @@ test("canonical links resolve full and shorthand targets and page slugs reject u
 test("Postgres and CLI round trip, revisions, conflict, search, soft delete and files", {
   skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 1 });
+  // A real schema and several connections, so the concurrent-write case contends for pageWrite's advisory lock.
+  const namespace = `pages_${randomUUID().replaceAll("-", "")}`;
+  const url = new URL(process.env.TEST_DATABASE_URL ?? "");
+  url.searchParams.set("options", `-c search_path=${namespace}`);
+  const db = new pg.Pool({ connectionString: url.toString(), max: 4 });
   const home = await mkdtemp(join(tmpdir(), "life-ai-pages-test-"));
   try {
-    await db.query(await temporarySchema());
+    const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
+    await db.query(`create schema ${namespace}`);
+    await db.query(
+      `${schema.replace(/^\\.*$/gm, "").replaceAll("public.", `${namespace}.`)}\nSET search_path TO ${namespace};`,
+    );
     if (process.env.LIFE_AI_FILE_TEST === "1") {
       const original = join(home, "synthetic.txt");
       await writeFile(original, `Synthetic integration fixture ${process.pid}\n`);
@@ -117,6 +125,7 @@ test("Postgres and CLI round trip, revisions, conflict, search, soft delete and 
     await assert.rejects(fileWrite(db, { ...file, key: "raw/missing", page: "topics/missing" }), /not found/);
     assert.equal(await fileRead(db, "raw/missing"), undefined);
   } finally {
+    await db.query(`drop schema if exists ${namespace} cascade`);
     await db.end();
     await rm(home, { recursive: true, force: true });
   }
