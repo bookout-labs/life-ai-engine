@@ -21,6 +21,12 @@ import {
   recordCommissionPlanSchema,
 } from "../../packages/core/commission-split.ts";
 import {
+  recordContact,
+  recordContactSchema,
+  searchContacts,
+  searchContactsSchema,
+} from "../../packages/core/contacts.ts";
+import {
   documentsCheck,
   documentsCheckSchema,
   recordDocument,
@@ -77,6 +83,26 @@ async function withDb<T>(env: Env, use: (client: pg.Client) => Promise<T>): Prom
 
 export function tools(env: Env): McpServer {
   const server = new McpServer({ name: "life-ai", version: "1.0.0" });
+  server.registerTool(
+    "search_contacts",
+    {
+      description:
+        "Search people outside the household by name, organisation or role, with optional role, member and activity filters. Results include all member and activity links.",
+      inputSchema: searchContactsSchema,
+    },
+    async (input) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => searchContacts(db, input))) }],
+    }),
+  );
+  server.registerTool(
+    "record_contact",
+    {
+      description:
+        "Create a contact, or replace its fields and links using id from search_contacts. Supply the complete links list; an empty list clears links. Reach details are optional; null or omitted clears a detail. Only vets can link to non-human members. Reuse request_id on retries to replay the original saved contact.",
+      inputSchema: recordContactSchema,
+    },
+    async (input) => writeResult(env, (db) => recordContact(db, input)),
+  );
   server.registerTool(
     "schedule",
     {
