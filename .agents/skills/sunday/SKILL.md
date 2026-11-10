@@ -11,6 +11,8 @@ Call the Life AI MCP tool `finance_records` for accounts and recurring monthly b
 
 Call the Life AI MCP tool `training_trend` for the last eight weeks of logged training. Show sessions per week and each flag with its reason and evidence weeks; flags are heuristics, not a diagnosis. Empty weeks mean nothing was logged, not rest.
 
+Call the Life AI MCP tool `subscriptions_check`. Show subscriptions missing this cycle, price changes, duplicate charges, `charged_after_end` and unrecorded recurring merchants, each with its evidence, and confirm them privately with the household before changing any record. Missing means no imported charge, not a cancellation; `not_linked` subscriptions need a merchant link through `link_subscription_merchant`.
+
 Review active goals by area through the Life AI MCP tool `goals` and follow each plan page for progress; report an unavailable tool explicitly. When a goal is met or abandoned, mark it with `set_goal_status`.
 
 Read current weekly and areas pages through pages.ts for household check-in preferences, routine, decisions and questions. Use the command's records for commitments and money due. Do not extract record tables from prose pages or treat missing spending, training or investment history as zero. Report unavailable sources privately. Prepare a short dashboard, write weekly/<date> through pages.ts and update the huddle data through its connected storage. Scheduled preparation may read connected sources and write private pages. Sending email requires an explicit current authorization and recipients read from private settings. Never embed recipients or household names in this procedure.
