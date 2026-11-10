@@ -16,6 +16,56 @@ test("recorded charges own monthly and yearly billing cycles", {
     await db.query("set local search_path to public");
     for (const scenario of [
       {
+        name: "matching two charges takes priority over zero total distance",
+        from: "2041-04-01",
+        due: 1,
+        recorded: "2041-04-16",
+        paid: true,
+        prior: "2041-05-01",
+        expected: [],
+      },
+      {
+        name: "minimum total distance leaves December due visible",
+        from: "2040-12-26",
+        due: 28,
+        recorded: "2040-12-07",
+        paid: true,
+        prior: "2040-10-19",
+        second: "2040-11-12",
+        expected: [["Fri Dec 28", "80.00"]],
+      },
+      {
+        name: "minimum total distance leaves April due visible",
+        from: "2041-04-11",
+        due: 14,
+        recorded: "2041-05-31",
+        paid: true,
+        prior: "2041-06-23",
+        second: "2041-05-20",
+        expected: [["Sun Apr 14", null]],
+      },
+      {
+        name: "surplus annual charge cannot claim next year",
+        from: "2041-01-01",
+        due: 6,
+        month: 1,
+        recorded: "2040-01-06",
+        paid: true,
+        prior: "2040-01-07",
+        expected: [["Sun Jan 06", "80.00"]],
+      },
+      {
+        name: "equal cost claims lexicographically earliest dates",
+        from: "2041-11-14",
+        days: 30,
+        due: 30,
+        recorded: "2041-11-13",
+        paid: true,
+        second: "2041-10-15",
+        third: "2041-09-16",
+        expected: [["Sat Nov 30", "80.00"]],
+      },
+      {
         name: "early unpaid charge stays outside the window",
         from: "2041-01-12",
         due: 12,
@@ -238,13 +288,13 @@ test("recorded charges own monthly and yearly billing cycles", {
         expected: [["Wed May 15", "80.00"]],
       },
       {
-        name: "crowded charges consume January and February only once each",
+        name: "crowded January charges leave February projected",
         from: "2041-01-28",
         due: 1,
         prior: "2040-11-01",
         recorded: "2040-12-31",
         second: "2041-01-03",
-        expected: [],
+        expected: [["Fri Feb 01", "20.00"]],
       },
       {
         name: "nearest matching preserves a missed December payment",
@@ -283,7 +333,10 @@ test("recorded charges own monthly and yearly billing cycles", {
             scenario.second,
           ]);
         }
-        const bills = await billsDue(db, scenario.from, 7);
+        if (scenario.third) {
+          await db.query("insert into charges (obligation_id, due_on, amount) values (1, $1, 20.00)", [scenario.third]);
+        }
+        const bills = await billsDue(db, scenario.from, scenario.days ?? 7);
         assert.deepEqual(
           bills.map((bill) => [bill.day, bill.amount]),
           scenario.expected,
