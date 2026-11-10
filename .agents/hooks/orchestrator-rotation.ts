@@ -52,14 +52,20 @@ Include the retiring T3 thread id and ${marker} in the successor prompt.
 Neither seat may archive the retiring thread. Post the successor's returned link,
 then stop this seat.`;
 
-// Context size is the last main-thread call's input; a missing transcript leaves the 400k backstop.
+// Context size is the last main-thread call's input plus output, as Claude counts context_tokens. The transcript may
+// lag one call behind, which only moves the handoff one Stop later; a missing transcript leaves the 400k backstop.
 function contextTokens(path: string | undefined): number {
   const rows = path && existsSync(path) ? readFileSync(path, "utf8").split("\n") : [];
   for (const line of rows.reverse().filter((row) => row.includes('"usage"'))) {
     const row = JSON.parse(line);
     const usage = row.message?.usage;
     if (row.type === "assistant" && !row.isSidechain && usage)
-      return usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+      return (
+        usage.input_tokens +
+        (usage.cache_read_input_tokens ?? 0) +
+        (usage.cache_creation_input_tokens ?? 0) +
+        (usage.output_tokens ?? 0)
+      );
   }
   return 0;
 }

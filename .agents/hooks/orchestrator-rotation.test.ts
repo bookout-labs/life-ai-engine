@@ -45,11 +45,18 @@ test("Claude: automatic compaction is blocked, and the next stop asks for the ha
 test("Claude: the first stop past 350k asks for the handoff once, before compaction", (t) => {
   const f = fixture(t, "claude");
   const transcript = join(f.env.HOME, "t.jsonl");
-  const call = (input: number, isSidechain = false) =>
+  const call = (input: number, isSidechain = false, output = 0) =>
     JSON.stringify({
       type: "assistant",
       isSidechain,
-      message: { usage: { input_tokens: 2, cache_read_input_tokens: input, cache_creation_input_tokens: 0 } },
+      message: {
+        usage: {
+          input_tokens: 2,
+          cache_read_input_tokens: input,
+          cache_creation_input_tokens: 0,
+          output_tokens: output,
+        },
+      },
     });
   writeFileSync(transcript, `${call(360_000)}\n${call(349_000)}\n${call(390_000, true)}\n`);
   assert.equal(
@@ -62,7 +69,7 @@ test("Claude: the first stop past 350k asks for the handoff once, before compact
     undefined,
     "no transcript: the 400k backstop",
   );
-  writeFileSync(transcript, `${call(349_000)}\n${call(350_000)}\n`);
+  writeFileSync(transcript, `${call(349_000)}\n${call(349_000, false, 1_000)}\n`);
   assert.match(f.send({ ...stop, transcript_path: transcript }).reason, /handoff\.ts write handoff/);
   assert.equal(f.send({ ...stop, transcript_path: transcript }), undefined, "delivered once");
 });
