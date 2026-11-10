@@ -201,7 +201,7 @@ export function tools(env: Env): McpServer {
     "upkeep",
     {
       description:
-        "List home and vehicle upkeep with schedules, latest completion and next due date, oldest due first. No history means no_record and a null next date. Monthly intervals clamp to month end. A yearly completion satisfies its calendar year; the next due date is in the following year. Missed dates remain overdue. from defaults to today in America/Chicago.",
+        "List home and vehicle upkeep with schedules, latest completion and next due date, oldest due first. No history means no_record and a null next date. Monthly intervals clamp to month end. A yearly completion satisfies the nearest scheduled occurrence, with ties going to the earlier occurrence; the next due date follows that occurrence. Missed dates remain overdue. from defaults to today in America/Chicago.",
       inputSchema: z.object({ from: z.iso.date().optional() }),
       annotations: { readOnlyHint: true },
     },
@@ -354,9 +354,17 @@ async function writeResult<T>(env: Env, use: (client: pg.Client) => Promise<T>) 
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
   } catch (error) {
     const text =
-      error instanceof pg.DatabaseError && error.code?.startsWith("23")
-        ? `Record rejected by database constraint ${error.constraint ?? error.code}. Check the input fields.`
-        : "Could not save the record. Retry with the same request_id.";
+      error instanceof z.ZodError
+        ? error.issues.map((issue) => issue.message).join("; ")
+        : error instanceof pg.DatabaseError && error.code?.startsWith("23")
+          ? `Record rejected by database constraint ${error.constraint ?? error.code}. Check the input fields.`
+          : error instanceof Error &&
+              "code" in error &&
+              typeof error.code === "string" &&
+              (/^08/.test(error.code) ||
+                ["40001", "40P01", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT"].includes(error.code))
+            ? "Could not save the record. Retry with the same request_id."
+            : "Could not save the record.";
     return { isError: true, content: [{ type: "text" as const, text }] };
   }
 }
