@@ -15,6 +15,7 @@ import * as z from "zod";
 import { payoffExplorer, payoffInputSchema } from "../../packages/core/amortize.ts";
 import { billsDue, deadlinesDue } from "../../packages/core/bills.ts";
 import { accounts, budgetTargets } from "../../packages/core/finances.ts";
+import { giftsInputSchema, readGifts, writeGift, writeGiftSchema } from "../../packages/core/gifts.ts";
 import {
   activeGoals,
   recordGoal,
@@ -278,6 +279,28 @@ function tools(env: Env): McpServer {
         content: [{ type: "text", text: JSON.stringify({ url: `${ORIGIN}/files/${token}`, expires_in: 300 }) }],
       };
     },
+  );
+  server.registerTool(
+    "gifts",
+    {
+      description:
+        "Read an occasion's USD gift list, recipient budgets, empty recipients, buyer split and totals. Planned excludes ideas; bought includes wrapped and given. Left subtracts planned and bought. Null budget means no limit recorded, not zero. Names use existing members.",
+      inputSchema: giftsInputSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => readGifts(db, input))) }],
+    }),
+  );
+  server.registerTool(
+    "record_gift",
+    {
+      description:
+        "Set up an occasion or recipient budget, add or replace a gift, or change its status. Use existing member IDs for recipients and household buyers; add a missing outside person to members first. Occasion IDs identify one occurrence. Amounts are USD decimal strings. Gift replacement supplies every field; omitted buyer/link/note clear them. Generate one request_id per command and reuse it on retries; retries return the original result without applying changes again.",
+      inputSchema: writeGiftSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => writeResult(env, (db) => writeGift(db, input)),
   );
   return server;
 }
