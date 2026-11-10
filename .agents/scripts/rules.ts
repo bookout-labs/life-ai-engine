@@ -65,8 +65,6 @@ export function validate(repo: string, map: string, rules: Rule[]): string[] {
       errors.push(`${rule.id}: id, rule and trigger must be nonempty.`);
     if (ids.has(rule.id)) errors.push(`Duplicate rule id: ${rule.id}`);
     ids.add(rule.id);
-    if (rule.context && !existsSync(join(repo, rule.context)))
-      errors.push(`${rule.id}: missing context ${rule.context}`);
     const file = join(repo, rule.route.file);
     if (!existsSync(file)) errors.push(`${rule.id}: missing route ${rule.route.file}`);
     // npm run check only runs .agents/**/*.test.ts, so a route outside .agents/ has tests nothing runs.

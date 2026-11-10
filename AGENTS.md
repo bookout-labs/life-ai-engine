@@ -6,7 +6,7 @@ Read personal context from Neon through node .agents/scripts/pages.ts list, read
 
 Neon holds records and personal prose, R2 holds originals, this repository holds code and system procedures, and the Builds board holds build status. docs/architecture.md describes storage.
 
-Use short, plain answers, visual explanations, existing tools and lean TypeScript. Platform features come first. Account tasks are ready plans with live walkthroughs.
+Use short, plain answers, visual explanations, existing tools and lean TypeScript. Platform features come first. Account tasks are ready plans with live walkthroughs. When writing TypeScript, read .agents/skills/lab/SKILL.md first. Before writing a page, read .agents/skills/wiki/SKILL.md.
 
 .agents/skills is the canonical skill folder. .agents/skills/wiki owns knowledge maintenance; sunday owns family check-ins; lab owns building, research and tool choices. docs/skill-map.md is a catalog. Hooks deliver context on events; checks validate routes. .agents/rules.ts is the rule source and AGENTS.md is generated.
 
@@ -20,8 +20,6 @@ Use short, plain answers, visual explanations, existing tools and lean TypeScrip
 - **snapshot**: Track changes left unsaved at the end of a reply. Trigger: reply ends. Route: hook `.agents/hooks/stop-check.ts` (Stop).
 - **gate**: Code saves require an open board issue, production proof and current cross-family review; system saves require issue and review. Trigger: pull request. Route: check `.agents/scripts/gate.ts`.
 - **evergreen**: Changing conditions and closed until-issue references fail the stale-rule check. Trigger: npm run check. Route: check `.agents/scripts/stale-rules.ts`.
-- **code-context**: Deliver lean-code and build guidance when TypeScript is edited. Trigger: TypeScript edit. Route: hook `.agents/hooks/code-rules.ts` (PreToolUse).
-- **wiki-context**: Deliver wiki maintenance guidance on scratch-page edits and pages.ts write or save. Trigger: scratch-page edit or pages.ts write/save. Route: hook `.agents/hooks/code-rules.ts` (PreToolUse).
 - **orchestrator-registration**: Persist coordinator opt-in from the first native UserPromptSubmit prompt per provider session. Later prompts and workers cannot opt in. Trigger: first native user prompt. Route: hook `.agents/hooks/orchestrator-rotation.ts` (UserPromptSubmit).
 - **orchestrator-rotation**: Only first-prompt opted-in orchestrators receive rotation instructions. Save private handoffs through pages.ts, recover active jobs without restarting them, and always launch the successor, pin it and unpin the retiring thread. Never archive the retiring thread. Trigger: coordinator stop. Route: hook `.agents/hooks/orchestrator-rotation.ts` (Stop).
 - **orchestrator-compaction**: Coordinators hand off at 400k tokens, where each agent's automatic compaction fires (CLAUDE_CODE_AUTO_COMPACT_WINDOW, model_auto_compact_token_limit). Claude's compaction is blocked, so it hands off with the full context; Codex compacts once, then hands off from its messages, the summary and the program store. Manual compaction and workers remain unaffected. Trigger: automatic coordinator compaction. Route: hook `.agents/hooks/orchestrator-rotation.ts` (PreCompact).

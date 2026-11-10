@@ -12,16 +12,6 @@
         ]
       },
       {
-        "matcher": "apply_patch|Edit|Write|Bash|exec_command",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.agents/hooks/code-rules.ts\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "apply_patch|Write|Edit|MultiEdit|Delete",
         "hooks": [
           {
