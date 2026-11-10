@@ -816,6 +816,71 @@ ALTER TABLE public.upkeep_tasks ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY
 
 
 --
+-- Name: weekly_occurrences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.weekly_occurrences (
+    pattern_id bigint NOT NULL,
+    local_date date NOT NULL,
+    event_id bigint,
+    status text NOT NULL,
+    CONSTRAINT weekly_occurrences_check CHECK (((status = 'skipped'::text) OR (event_id IS NOT NULL))),
+    CONSTRAINT weekly_occurrences_local_date_check CHECK (((local_date >= '1900-01-01'::date) AND (local_date <= '2200-12-31'::date))),
+    CONSTRAINT weekly_occurrences_status_check CHECK ((status = ANY (ARRAY['created'::text, 'skipped'::text])))
+);
+
+
+--
+-- Name: weekly_patterns; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.weekly_patterns (
+    id bigint NOT NULL,
+    activity_id bigint NOT NULL,
+    weekday integer NOT NULL,
+    local_start time without time zone NOT NULL,
+    duration_minutes integer NOT NULL,
+    kind text NOT NULL,
+    location text,
+    active_from date NOT NULL,
+    active_until date NOT NULL,
+    CONSTRAINT weekly_patterns_active_from_check CHECK (((active_from >= '1900-01-01'::date) AND (active_from <= '2200-12-31'::date))),
+    CONSTRAINT weekly_patterns_active_until_check CHECK (((active_until >= '1900-01-01'::date) AND (active_until <= '2200-12-31'::date))),
+    CONSTRAINT weekly_patterns_check CHECK ((active_until >= active_from)),
+    CONSTRAINT weekly_patterns_duration_minutes_check CHECK (((duration_minutes >= 1) AND (duration_minutes <= 1440))),
+    CONSTRAINT weekly_patterns_kind_check CHECK (((length(TRIM(BOTH FROM kind)) > 0) AND (kind = lower(kind)) AND (kind <> 'cancelled'::text))),
+    CONSTRAINT weekly_patterns_local_start_check CHECK ((local_start < '24:00:00'::time without time zone)),
+    CONSTRAINT weekly_patterns_weekday_check CHECK (((weekday >= 1) AND (weekday <= 7)))
+);
+
+
+--
+-- Name: weekly_patterns_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.weekly_patterns ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.weekly_patterns_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: weekly_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.weekly_requests (
+    request_id uuid NOT NULL,
+    operation text NOT NULL,
+    result jsonb NOT NULL,
+    CONSTRAINT weekly_requests_operation_check CHECK ((operation = ANY (ARRAY['pattern'::text, 'week'::text])))
+);
+
+
+--
 -- Name: workout_blocks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1252,6 +1317,38 @@ ALTER TABLE ONLY public.upkeep_tasks
 
 
 --
+-- Name: weekly_occurrences weekly_occurrences_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.weekly_occurrences
+    ADD CONSTRAINT weekly_occurrences_event_id_key UNIQUE (event_id);
+
+
+--
+-- Name: weekly_occurrences weekly_occurrences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.weekly_occurrences
+    ADD CONSTRAINT weekly_occurrences_pkey PRIMARY KEY (pattern_id, local_date);
+
+
+--
+-- Name: weekly_patterns weekly_patterns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.weekly_patterns
+    ADD CONSTRAINT weekly_patterns_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: weekly_requests weekly_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.weekly_requests
+    ADD CONSTRAINT weekly_requests_pkey PRIMARY KEY (request_id);
+
+
+--
 -- Name: workout_blocks workout_blocks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1546,6 +1643,30 @@ ALTER TABLE ONLY public.upkeep_completions
 
 
 --
+-- Name: weekly_occurrences weekly_occurrences_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.weekly_occurrences
+    ADD CONSTRAINT weekly_occurrences_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.events(id);
+
+
+--
+-- Name: weekly_occurrences weekly_occurrences_pattern_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.weekly_occurrences
+    ADD CONSTRAINT weekly_occurrences_pattern_id_fkey FOREIGN KEY (pattern_id) REFERENCES public.weekly_patterns(id);
+
+
+--
+-- Name: weekly_patterns weekly_patterns_activity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.weekly_patterns
+    ADD CONSTRAINT weekly_patterns_activity_id_fkey FOREIGN KEY (activity_id) REFERENCES public.activities(id);
+
+
+--
 -- Name: workout_blocks workout_blocks_workout_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1583,4 +1704,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110220000'),
     ('20261110230000'),
     ('20261111010000'),
-    ('20261111020000');
+    ('20261111020000'),
+    ('20261111030000');
