@@ -302,8 +302,10 @@ test("subscription tools save replayable links and return specific MCP input err
     await db.query(`set search_path to ${namespace}`);
     for (const name of [
       "20261108230000_obligations_charges_deadlines_loans",
+      "20261110150000_accounts_budget_targets",
       "20261110180000_spending_transactions",
       "20261111040000_obligation_merchants",
+      "20261111050000_household_transactions",
     ]) {
       const sql = await readFile(new URL(`../../db/migrations/${name}.sql`, import.meta.url), "utf8");
       await db.query(sql.split("-- migrate:down")[0] ?? "");
@@ -471,6 +473,72 @@ test("subscription tools save replayable links and return specific MCP input err
     await db.query(migration.split("-- migrate:down")[1] ?? "");
     await db.query(migration.split("-- migrate:down")[0] ?? "");
     assert.equal((await subscriptionsCheck(db, { as_of: "2040-05-15" })).subscriptions[0]?.status, "not_linked");
+  } finally {
+    await db.query(`drop schema ${namespace} cascade`);
+    await db.end();
+  }
+});
+
+test("business charges cannot become household subscription candidates or linked payment evidence", {
+  skip: !process.env.SUBSCRIPTIONS_TEST_DATABASE_URL,
+}, async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { Client } = await import("pg");
+  const { importSpending } = await import("./spending.ts");
+  const { subscriptionsCheck, linkSubscriptionMerchant } = await import("./subscriptions.ts");
+  const db = new Client({ connectionString: process.env.SUBSCRIPTIONS_TEST_DATABASE_URL });
+  await db.connect();
+  const namespace = `household_subscriptions_${crypto.randomUUID().replaceAll("-", "")}`;
+  try {
+    await db.query(`create schema ${namespace}`);
+    const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
+    await db.query(schema.replace(/^\\.*$/gm, "").replaceAll(/\bpublic\b/g, namespace));
+    await db.query(`set search_path to ${namespace}`);
+    await db.query(`insert into accounts(institution, name, kind, scope, source_ref) values
+      ('Synthetic bank', 'Household', 'card', 'household', 'home-card'),
+      ('Synthetic bank', 'Business', 'card', 'business', 'work-card'),
+      ('Synthetic bank', 'Unknown', 'card', 'unknown', 'unknown-card')`);
+    await importSpending(
+      db,
+      ["home-card", "work-card", "unknown-card", "unmapped-card"].flatMap((account_ref) =>
+        ["2040-03-01", "2040-04-01"].map((posted_on) => ({
+          source: "synthetic",
+          source_id: `${account_ref}-${posted_on}`,
+          posted_on,
+          amount: "10.00",
+          merchant: `Synthetic ${account_ref}`,
+          category: "Synthetic category",
+          account_ref,
+          pending: false,
+          exclusion_reason: null,
+        })),
+      ),
+    );
+    const check = () => subscriptionsCheck(db, { as_of: "2040-04-15" });
+    const result = await check();
+    assert.deepEqual(
+      result.unrecorded_recurring_merchants.map((row) => row.merchant),
+      ["Synthetic home-card", "Synthetic unknown-card", "Synthetic unmapped-card"],
+    );
+    const { rows } = await db.query(`insert into obligations(name, kind, cadence, due_day)
+      values ('Synthetic linked plan', 'subscription', 'monthly', 1) returning id::text`);
+    const obligation_id = rows[0].id;
+    const saved = await linkSubscriptionMerchant(db, {
+      request_id: crypto.randomUUID(),
+      obligation_id,
+      merchant: "Synthetic work-card",
+      action: "link",
+    });
+    assert.match(saved.warning ?? "", /No matching transaction/);
+    const linked = await check();
+    assert.equal(linked.subscriptions[0]?.status, "missing_this_cycle");
+    assert.equal(linked.subscriptions[0]?.last_charge, null);
+    assert.deepEqual(linked.subscriptions[0]?.duplicate_charges, []);
+    assert.equal(linked.subscriptions[0]?.price_changed, false);
+    await db.query("update obligations set ended_on = '2040-03-15' where id = $1", [obligation_id]);
+    assert.deepEqual((await check()).charged_after_end, []);
+    await db.query("update accounts set scope = 'household' where source_ref = 'work-card'");
+    assert.equal((await check()).charged_after_end[0]?.evidence.length, 1);
   } finally {
     await db.query(`drop schema ${namespace} cascade`);
     await db.end();

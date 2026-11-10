@@ -293,3 +293,54 @@ test("category filters ignore surrounding whitespace and case", () => {
   assert.equal(result.total, "12.34");
   assert.equal(result.categories[0]?.target?.monthly_max, "580.00");
 });
+
+test("household spending excludes business accounts but includes unknown and unmapped accounts", {
+  skip: !process.env.SPENDING_TEST_DATABASE_URL,
+}, async () => {
+  const db = new Client({ connectionString: process.env.SPENDING_TEST_DATABASE_URL });
+  await db.connect();
+  const namespace = `household_${crypto.randomUUID().replaceAll("-", "")}`;
+  try {
+    await db.query(`create schema ${namespace}`);
+    const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
+    await db.query(schema.replace(/^\\.*$/gm, "").replaceAll(/\bpublic\b/g, namespace));
+    await db.query(`set search_path to ${namespace}`);
+    await db.query(`insert into accounts(institution, name, kind, scope, source_ref) values
+      ('Synthetic bank', 'Household', 'card', 'household', 'home-card'),
+      ('Synthetic bank', 'Business', 'card', 'business', 'work-card'),
+      ('Synthetic bank', 'Unknown', 'card', 'unknown', 'unknown-card'),
+      ('Synthetic bank', 'Unmapped business', 'card', 'business', null)`);
+    await db.query(`insert into budget_targets(category, monthly_min, monthly_max, status)
+      values ('Synthetic category', 290, 580, 'approved')`);
+    await importSpending(db, [
+      charge("home", "10.00", { account_ref: "home-card" }),
+      charge("work", "1000.00", { account_ref: "work-card", merchant: "Synthetic business" }),
+      charge("unknown", "20.00", { account_ref: "unknown-card" }),
+      charge("unmapped", "30.00", { account_ref: "unmapped-card" }),
+    ]);
+    const result = await readSpending(db, { month: "2040-02" }, "2040-02-15");
+    assert.equal(result.total, "60.00");
+    assert.equal(result.categories[0]?.spend, "60.00");
+    assert.equal(result.categories[0]?.target?.paced_max, "300.00");
+    assert.equal(result.categories[0]?.target?.above_pace, false);
+    assert.deepEqual(result.top_merchants, [{ merchant: "Synthetic shop", spend: "60.00" }]);
+    assert.deepEqual(result.unusual, []);
+    await db.query("update accounts set scope = 'unknown' where source_ref = 'work-card'");
+    const reclassified = await readSpending(db, { month: "2040-02" }, "2040-02-15");
+    assert.equal(reclassified.total, "1060.00");
+    assert.equal(reclassified.categories[0]?.target?.above_pace, true);
+    for (const source_ref of ["", " ", " work-card", "work-card ", "work-card"]) {
+      await assert.rejects(
+        db.query(
+          "insert into accounts(institution, name, kind, scope, source_ref) values ('Synthetic bank', 'Invalid mapping', 'card', 'business', $1)",
+          [source_ref],
+        ),
+      );
+    }
+    await db.query(`insert into accounts(institution, name, kind, scope)
+      values ('Synthetic bank', 'Another unmapped account', 'card', 'household')`);
+  } finally {
+    await db.query(`drop schema ${namespace} cascade`);
+    await db.end();
+  }
+});

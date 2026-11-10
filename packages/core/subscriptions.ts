@@ -226,7 +226,7 @@ export function buildSubscriptionsCheck(
     missing_this_cycle: subscriptions.filter((row) => row.status === "missing_this_cycle"),
     unrecorded_recurring_merchants: recurringMerchants(transactions, links, asOf),
     notes: [
-      "USD expenses are positive. Refunds, credits, pending and excluded transactions never count as charges. Results reflect imported transactions only; missing does not establish cancellation.",
+      "USD expenses are positive. Business-account charges are excluded from candidates and linked evidence. Unknown-scope and unmapped accounts are included. Refunds, credits, pending and excluded transactions never count as charges. Results reflect imported transactions only; missing does not establish cancellation.",
       `Monthly cycles start ${EARLY_GRACE_DAYS} days before the clamped due date, or ${ESTIMATED_EARLY_GRACE_DAYS} when day_is_estimate, and end before the next such boundary. Status uses the cycle of the latest clamped due date on or before as_of. Yearly cycles start on the clamped due date. Missing due_day assumes day 1 and is flagged.`,
       "Yearly recurrence cannot yet be detected from the short imported history. A linked yearly subscription without a charge in its cycle is yearly_unknown, not evidence of cancellation.",
       `Monthly candidates need at least ${MIN_CHARGES} occurrences, grouping debits within ${DUPLICATE_WINDOW_DAYS} days of the occurrence's first debit. Gaps must be ${MONTHLY_MIN_DAYS}-${MONTHLY_MAX_DAYS} or ${TWO_MONTH_MIN_DAYS}-${TWO_MONTH_MAX_DAYS} days; the latest debit must be within ${MONTHLY_MAX_DAYS} days, or ${TWO_MONTH_MAX_DAYS} if the last gap was two months. Consecutive occurrence amounts (first debit) may differ by at most ${AMOUNT_TOLERANCE_BPS / 100n}% of the previous amount. Exact merchants only; all obligation links exclude candidates. Confirm evidence privately.`,
@@ -244,7 +244,7 @@ export async function subscriptionsCheck(db: pg.ClientBase, input: z.input<typeo
     );
     const links = await db.query("select obligation_id::text, merchant from obligation_merchants order by merchant");
     const transactions = await db.query(
-      "select source, source_id, posted_on::text, amount::text, merchant, account_ref, pending, exclusion_reason from transactions where posted_on <= $1::date",
+      "select source, source_id, posted_on::text, amount::text, merchant, account_ref, pending, exclusion_reason from household_transactions where posted_on <= $1::date",
       [as_of],
     );
     const result = buildSubscriptionsCheck(
@@ -306,7 +306,7 @@ export async function linkSubscriptionMerchant(db: pg.ClientBase, input: unknown
       ]);
     const matching =
       value.action === "link"
-        ? await db.query("select 1 from transactions where merchant = $1 limit 1", [value.merchant])
+        ? await db.query("select 1 from household_transactions where merchant = $1 limit 1", [value.merchant])
         : null;
     const result = {
       obligation_id: value.obligation_id,
