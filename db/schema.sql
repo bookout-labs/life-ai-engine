@@ -87,10 +87,12 @@ CREATE TABLE public.accounts (
     subtype text,
     scope text NOT NULL,
     notes text,
+    source_ref text,
     CONSTRAINT accounts_institution_check CHECK (((institution = btrim(institution)) AND (institution ~ '\S'::text))),
     CONSTRAINT accounts_kind_check CHECK ((kind = ANY (ARRAY['bank'::text, 'card'::text, 'investment'::text, 'loan'::text]))),
     CONSTRAINT accounts_name_check CHECK (((name = btrim(name)) AND (name ~ '\S'::text))),
     CONSTRAINT accounts_scope_check CHECK ((scope = ANY (ARRAY['household'::text, 'business'::text, 'unknown'::text]))),
+    CONSTRAINT accounts_source_ref_check CHECK (((source_ref = btrim(source_ref)) AND (source_ref ~ '\S'::text))),
     CONSTRAINT accounts_subtype_check CHECK (((subtype = btrim(subtype)) AND (subtype ~ '\S'::text)))
 );
 
@@ -472,6 +474,51 @@ ALTER TABLE public.goals ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 
 
 --
+-- Name: transactions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.transactions (
+    source text NOT NULL,
+    source_id text NOT NULL,
+    posted_on date NOT NULL,
+    amount numeric(12,2) NOT NULL,
+    merchant text NOT NULL,
+    category text NOT NULL,
+    account_ref text NOT NULL,
+    pending boolean NOT NULL,
+    exclusion_reason text,
+    CONSTRAINT transactions_account_ref_check CHECK (((account_ref = btrim(account_ref)) AND (account_ref ~ '\S'::text))),
+    CONSTRAINT transactions_amount_check CHECK ((amount <> 'NaN'::numeric)),
+    CONSTRAINT transactions_category_check CHECK (((category = btrim(category)) AND (category ~ '\S'::text))),
+    CONSTRAINT transactions_exclusion_reason_check CHECK ((exclusion_reason = ANY (ARRAY['transfer'::text, 'hidden'::text, 'income'::text]))),
+    CONSTRAINT transactions_merchant_check CHECK (((merchant = btrim(merchant)) AND (merchant ~ '\S'::text))),
+    CONSTRAINT transactions_posted_on_check CHECK (isfinite(posted_on)),
+    CONSTRAINT transactions_source_check CHECK (((source = btrim(source)) AND (source ~ '\S'::text))),
+    CONSTRAINT transactions_source_id_check CHECK (((source_id = btrim(source_id)) AND (source_id ~ '\S'::text)))
+);
+
+
+--
+-- Name: household_transactions; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.household_transactions AS
+ SELECT source,
+    source_id,
+    posted_on,
+    amount,
+    merchant,
+    category,
+    account_ref,
+    pending,
+    exclusion_reason
+   FROM public.transactions t
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM public.accounts a
+          WHERE ((a.source_ref = t.account_ref) AND (a.scope = 'business'::text)))));
+
+
+--
 -- Name: investment_buys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -744,31 +791,6 @@ CREATE TABLE public.schema_migrations (
 
 
 --
--- Name: transactions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.transactions (
-    source text NOT NULL,
-    source_id text NOT NULL,
-    posted_on date NOT NULL,
-    amount numeric(12,2) NOT NULL,
-    merchant text NOT NULL,
-    category text NOT NULL,
-    account_ref text NOT NULL,
-    pending boolean NOT NULL,
-    exclusion_reason text,
-    CONSTRAINT transactions_account_ref_check CHECK (((account_ref = btrim(account_ref)) AND (account_ref ~ '\S'::text))),
-    CONSTRAINT transactions_amount_check CHECK ((amount <> 'NaN'::numeric)),
-    CONSTRAINT transactions_category_check CHECK (((category = btrim(category)) AND (category ~ '\S'::text))),
-    CONSTRAINT transactions_exclusion_reason_check CHECK ((exclusion_reason = ANY (ARRAY['transfer'::text, 'hidden'::text, 'income'::text]))),
-    CONSTRAINT transactions_merchant_check CHECK (((merchant = btrim(merchant)) AND (merchant ~ '\S'::text))),
-    CONSTRAINT transactions_posted_on_check CHECK (isfinite(posted_on)),
-    CONSTRAINT transactions_source_check CHECK (((source = btrim(source)) AND (source ~ '\S'::text))),
-    CONSTRAINT transactions_source_id_check CHECK (((source_id = btrim(source_id)) AND (source_id ~ '\S'::text)))
-);
-
-
---
 -- Name: upkeep_completions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -984,6 +1006,14 @@ ALTER TABLE ONLY public.accounts
 
 ALTER TABLE ONLY public.accounts
     ADD CONSTRAINT accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: accounts accounts_source_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.accounts
+    ADD CONSTRAINT accounts_source_ref_key UNIQUE (source_ref);
 
 
 --
@@ -1759,4 +1789,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261111010000'),
     ('20261111020000'),
     ('20261111030000'),
-    ('20261111040000');
+    ('20261111040000'),
+    ('20261111050000');

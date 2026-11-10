@@ -211,7 +211,7 @@ export function buildSpending(
     top_merchants: merchants,
     unusual,
     notes: [
-      "USD. Expenses positive; refunds negative. Pending, transfers, hidden and income excluded.",
+      "USD. Expenses positive; refunds negative. Business accounts, pending, transfers, hidden and income excluded. Unknown-scope and unmapped accounts included.",
       "Draft targets are proposals. Pace is the monthly target times elapsed calendar days, rounded to cents.",
       ...([...new Set(rows.map((row) => row.source))].some((source) => !coveredSources.has(source)) || rows.length === 0
         ? [
@@ -230,7 +230,7 @@ export async function readSpending(db: pg.ClientBase, input: z.infer<typeof spen
   try {
     const { rows } = await db.query(
       `select source, source_id, posted_on::text, amount::text,
-      merchant, category, account_ref, pending, exclusion_reason from transactions where posted_on <= $1::date`,
+      merchant, category, account_ref, pending, exclusion_reason from household_transactions where posted_on <= $1::date`,
       [asOf],
     );
     const result = buildSpending(z.array(spendingTransactionSchema).parse(rows), await budgetTargets(db), parsed, asOf);
