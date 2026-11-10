@@ -93,7 +93,6 @@ export function buildMoneyCheck(
     byObligation.set(charge.obligation_id, history);
   }
   for (const obligation of obligations) {
-    if (obligation.ended_on !== null) continue;
     const history = (byObligation.get(obligation.id) ?? []).toSorted((a, b) => a.due_on.localeCompare(b.due_on));
     const item = (due_on: string, amount: string | null, estimate: boolean) => ({
       obligation_id: obligation.id,
@@ -110,10 +109,11 @@ export function buildMoneyCheck(
       if (charge.due_on < overdueFrom) stale_unpaid++;
       else if (charge.due_on < from) overdue.push(entry);
     }
+    if (obligation.ended_on !== null) continue;
     const confirmed = history.filter((charge) => !charge.amount_is_estimate && charge.due_on <= through);
     const current = confirmed.at(-1);
     const previous = confirmed.at(-2);
-    if (current && previous && cents(current.amount) > cents(previous.amount)) {
+    if (current && previous && current.due_on >= overdueFrom && cents(current.amount) > cents(previous.amount)) {
       const old = cents(previous.amount);
       const increase = cents(current.amount) - old;
       price_increases.push({
@@ -155,11 +155,11 @@ export async function readMoneyCheck(db: pg.ClientBase, from: string, bills?: Bi
     const { rows } = await db.query(`select
     (select coalesce(jsonb_agg(o), '[]'::jsonb) from (
       select id::text, name, day_is_estimate, pays_from, ended_on::text
-      from obligations where ended_on is null
+      from obligations
     ) o) as obligations,
     (select coalesce(jsonb_agg(c), '[]'::jsonb) from (
       select c.obligation_id::text, c.due_on::text, c.amount::text, c.amount_is_estimate, c.paid_on::text
-      from charges c join obligations o on o.id = c.obligation_id where o.ended_on is null
+      from charges c
     ) c) as charges`);
     const snapshot = z
       .object({ obligations: z.array(obligationSchema), charges: z.array(chargeSchema) })

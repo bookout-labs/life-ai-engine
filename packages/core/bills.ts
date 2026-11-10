@@ -11,26 +11,38 @@ export type Bill = {
 };
 export type Deadline = { due_on: string; item: string; action: string; overdue: boolean };
 
-// A charge already recorded for that day wins; otherwise the latest charge is what to expect.
+// Recorded charges own their calendar cycle; only cycles without charges are projected.
 export async function billsDue(db: pg.ClientBase | pg.Pool, from: string, days: number): Promise<Bill[]> {
   const { rows } = await db.query<Bill>(
-    `select to_char(d.day, 'Dy Mon DD') as day, o.name, o.pays_from, o.day_is_estimate,
-            coalesce(exact.amount, last.amount)::text as amount,
-            coalesce(exact.amount_is_estimate, last.amount_is_estimate, false) as amount_is_estimate
-       from generate_series($1::date, $1::date + $2::int - 1, interval '1 day') as d(day)
-       join obligations o
-         on o.ended_on is null and o.due_day is not null
-        and (o.cadence = 'monthly' or o.due_month = extract(month from d.day))
-        -- A due day past the month's end (the 31st in November) falls on its last day.
-        and extract(day from d.day) = least(o.due_day, extract(day from date_trunc('month', d.day) + interval '1 month - 1 day'))
-       left join charges exact on exact.obligation_id = o.id and exact.due_on = d.day::date
-       left join lateral (
-         select amount, amount_is_estimate from charges
-          where obligation_id = o.id and due_on < d.day::date
-          order by due_on desc limit 1
-       ) last on true
-      where exact.paid_on is null
-      order by d.day, o.name`,
+    `with active as (
+       select * from obligations where ended_on is null and due_day is not null
+     ), bills as (
+       select c.due_on as day, o.name, o.pays_from, o.day_is_estimate, c.amount, c.amount_is_estimate
+         from active o join charges c on c.obligation_id = o.id
+        where c.paid_on is null and c.due_on >= $1::date and c.due_on < $1::date + $2::int
+       union all
+       select d.day::date, o.name, o.pays_from, o.day_is_estimate,
+              last.amount, coalesce(last.amount_is_estimate, false)
+         from generate_series($1::date, $1::date + $2::int - 1, interval '1 day') as d(day)
+         join active o
+           on (o.cadence = 'monthly' or o.due_month = extract(month from d.day))
+          -- A due day past the month's end (the 31st in November) falls on its last day.
+          and extract(day from d.day) = least(o.due_day, extract(day from date_trunc('month', d.day) + interval '1 month - 1 day'))
+         left join lateral (
+           select amount, amount_is_estimate from charges
+            where obligation_id = o.id and due_on < d.day::date
+            order by due_on desc limit 1
+         ) last on true
+        where not exists (
+          select 1 from charges c
+           where c.obligation_id = o.id
+             and date_trunc(case o.cadence when 'monthly' then 'month' else 'year' end, c.due_on)
+               = date_trunc(case o.cadence when 'monthly' then 'month' else 'year' end, d.day)
+        )
+     )
+     select to_char(day, 'Dy Mon DD') as day, name, pays_from, day_is_estimate,
+            amount::text, amount_is_estimate
+       from bills order by bills.day, name`,
     [from, days],
   );
   return rows;
