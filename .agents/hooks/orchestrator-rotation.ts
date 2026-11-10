@@ -39,8 +39,7 @@ reporting thread/link and report path in the detailed body. Reconcile against th
 T3 task inventory and ~/.life-ai/orchestrate/life-ai-builds before writing. Missing jobs
 are not safe to infer. Do not use the provider session id as the retiring T3 thread id.
 Personal prose belongs in Neon through pages.ts. Large artifacts belong in private files
-or R2. Capture bootstrap stdout with set -o pipefail; <command> | node .agents/scripts/handoff.ts capture. Over 40,000 bytes returns only private path, bytes
-and SHA256. Required source reads still apply.
+or R2. Required source reads still apply.
 Read back using node .agents/scripts/handoff.ts read handoff/<unique-slug> before retiring.
 Use --full after the header to recover the detailed state and active jobs.
 A successor starts with poteto-mode Orchestrate and Session pickup, reads the header
