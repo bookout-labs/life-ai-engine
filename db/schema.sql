@@ -245,6 +245,37 @@ ALTER TABLE public.deadlines ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 
 
 --
+-- Name: document_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.document_requests (
+    request_id uuid NOT NULL,
+    result jsonb NOT NULL
+);
+
+
+--
+-- Name: documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    kind text NOT NULL,
+    member_id bigint,
+    location text,
+    file_key text,
+    expires_on date,
+    reviewed_on date,
+    notes text,
+    CONSTRAINT documents_expires_on_check CHECK (((expires_on >= '1900-01-01'::date) AND (expires_on <= '2200-12-31'::date))),
+    CONSTRAINT documents_kind_check CHECK ((kind = ANY (ARRAY['will'::text, 'durable_power_of_attorney'::text, 'healthcare_directive'::text, 'life_insurance'::text, 'guardianship'::text, 'birth_certificate'::text, 'social_security_card'::text, 'passport'::text]))),
+    CONSTRAINT documents_location_check CHECK (((length(location) <= 2000) AND (location ~ '[^[:space:]]'::text))),
+    CONSTRAINT documents_notes_check CHECK ((length(notes) <= 4000)),
+    CONSTRAINT documents_reviewed_on_check CHECK (((reviewed_on >= '1900-01-01'::date) AND (reviewed_on <= '2200-12-31'::date)))
+);
+
+
+--
 -- Name: events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -895,6 +926,30 @@ ALTER TABLE ONLY public.deadlines
 
 
 --
+-- Name: document_requests document_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.document_requests
+    ADD CONSTRAINT document_requests_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: documents documents_kind_member_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.documents
+    ADD CONSTRAINT documents_kind_member_id_key UNIQUE NULLS NOT DISTINCT (kind, member_id);
+
+
+--
+-- Name: documents documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.documents
+    ADD CONSTRAINT documents_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: events events_activity_id_starts_at_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1247,6 +1302,22 @@ ALTER TABLE ONLY public.deadlines
 
 
 --
+-- Name: documents documents_file_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.documents
+    ADD CONSTRAINT documents_file_key_fkey FOREIGN KEY (file_key) REFERENCES public.files(key);
+
+
+--
+-- Name: documents documents_member_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.documents
+    ADD CONSTRAINT documents_member_id_fkey FOREIGN KEY (member_id) REFERENCES public.members(id);
+
+
+--
 -- Name: events events_activity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1401,4 +1472,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110190000'),
     ('20261110200000'),
     ('20261110210000'),
-    ('20261110220000');
+    ('20261110220000'),
+    ('20261110230000');

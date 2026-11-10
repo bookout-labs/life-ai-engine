@@ -42,6 +42,8 @@ test("every MCP tool advertises an object without top-level schema combinators",
     })
     .parse(payload).result.tools;
   assert.ok(listed.some((tool) => tool.name === "record_gift"));
+  assert.ok(listed.some((tool) => tool.name === "documents_check"));
+  assert.ok(listed.some((tool) => tool.name === "record_document"));
   for (const tool of listed) {
     assert.equal(tool.inputSchema.type, "object", tool.name);
     for (const keyword of ["oneOf", "anyOf", "allOf"]) {
@@ -107,4 +109,27 @@ test("upkeep future date returns a validation error without a retry hint", {
   assert.match(text, /"isError":true/);
   assert.match(text, /Completion date cannot be in the future/);
   assert.doesNotMatch(text, /retry/i);
+});
+
+test("record_document rejects invalid input before database access", async () => {
+  for (const patch of [{ kind: "unknown" }, { location: "   " }, { member_id: "0" }, { expires_on: "2040-02-30" }]) {
+    const response = await createMcpHandler(() => tools({})).fetch(
+      new Request("https://synthetic.test/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "record_document",
+            arguments: { request_id: crypto.randomUUID(), kind: "will", ...patch },
+          },
+        }),
+      }),
+    );
+    const text = await response.text();
+    assert.match(text, /"isError":true/);
+    assert.doesNotMatch(text, /Retry with the same request_id/);
+  }
 });
