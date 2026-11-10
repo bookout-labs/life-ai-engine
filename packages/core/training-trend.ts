@@ -51,9 +51,10 @@ export function summarizeTraining(sessions: readonly Workout[], { asOf, weeks }:
   const byWeek = new Map(rows.map((w) => [w.week, w]));
   const days = new Set<string>();
   for (const session of sessions) {
+    if (session.performed_on > asOf) continue;
+    if (session.performed_on >= addDays(current, -(weeks - 1) * 7 - 6)) days.add(session.performed_on);
     const row = byWeek.get(monday(session.performed_on));
-    if (!row || session.performed_on > asOf) continue;
-    days.add(session.performed_on);
+    if (!row) continue;
     const kind = (Object.hasOwn(row.by_kind, session.kind) && row.by_kind[session.kind]) || totals();
     row.by_kind = { ...row.by_kind, [session.kind]: kind };
     for (const target of [row, kind]) {
@@ -73,12 +74,24 @@ export function summarizeTraining(sessions: readonly Workout[], { asOf, weeks }:
       }
     }
   }
-  return { as_of: asOf, weeks: rows, flags: rules.flatMap((rule) => rule.evaluate(rows, [...days].sort())) };
+  const flags = rules.flatMap((rule) => rule.evaluate(rows, [...days].sort()));
+  const round = (value: number) => Math.round(value * 100) / 100;
+  for (const row of rows) {
+    for (const target of [row, ...Object.values(row.by_kind)]) {
+      if (target.volume_kg !== null) target.volume_kg = round(target.volume_kg);
+    }
+  }
+  for (const flag of flags) {
+    if (flag.kind === "load_spike" && flag.metric === "volume_kg") {
+      flag.value = round(flag.value);
+      flag.baseline = round(flag.baseline);
+    }
+  }
+  return { as_of: asOf, weeks: rows, flags };
 }
 
 const rules = [
   {
-    kind: "load_spike",
     baselineWeeks: 3,
     ratio: 1.5,
     evaluate(rows: TrainingWeek[]): TrainingFlag[] {
@@ -106,7 +119,6 @@ const rules = [
     },
   },
   {
-    kind: "no_rest",
     minimumDays: 7,
     evaluate(_rows: TrainingWeek[], days: string[]): TrainingFlag[] {
       const flags: TrainingFlag[] = [];
@@ -138,7 +150,6 @@ const rules = [
     },
   },
   {
-    kind: "sharp_drop",
     baselineWeeks: 3,
     minimumSessions: 2,
     ratio: 0.5,
@@ -170,6 +181,6 @@ export async function trainingTrend(
   input: z.infer<typeof trainingTrendSchema> = {},
 ): Promise<TrainingTrend> {
   const { asOf = today(), weeks = 8 } = trainingTrendSchema.parse(input);
-  const from = addDays(monday(asOf), -(weeks - 1) * 7);
+  const from = addDays(monday(asOf), -(weeks - 1) * 7 - 6);
   return summarizeTraining(await workoutsInRange(db, from, asOf), { asOf, weeks });
 }
