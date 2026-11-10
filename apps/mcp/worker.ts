@@ -41,6 +41,7 @@ import {
   setGoalStatus,
   setGoalStatusSchema,
 } from "../../packages/core/goals.ts";
+import { InputError } from "../../packages/core/input-error.ts";
 import { investmentBuys } from "../../packages/core/investment-buys.ts";
 import { logWorkout, logWorkoutSchema } from "../../packages/core/log-workout.ts";
 import { readMoneyCheck } from "../../packages/core/money-check.ts";
@@ -379,7 +380,7 @@ export function tools(env: Env): McpServer {
   return server;
 }
 
-async function writeResult<T>(env: Env, use: (client: pg.Client) => Promise<T>) {
+export async function writeResult<T>(env: Env, use: (client: pg.Client) => Promise<T>) {
   try {
     const result = await withDb(env, use);
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
@@ -387,15 +388,17 @@ async function writeResult<T>(env: Env, use: (client: pg.Client) => Promise<T>) 
     const text =
       error instanceof z.ZodError
         ? error.issues.map((issue) => issue.message).join("; ")
-        : error instanceof pg.DatabaseError && error.code?.startsWith("23")
-          ? `Record rejected by database constraint ${error.constraint ?? error.code}. Check the input fields.`
-          : error instanceof Error &&
-              "code" in error &&
-              typeof error.code === "string" &&
-              (/^08/.test(error.code) ||
-                ["40001", "40P01", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT"].includes(error.code))
-            ? "Could not save the record. Retry with the same request_id."
-            : "Could not save the record.";
+        : error instanceof InputError
+          ? error.message
+          : error instanceof pg.DatabaseError && error.code?.startsWith("23")
+            ? `Record rejected by database constraint ${error.constraint ?? error.code}. Check the input fields.`
+            : error instanceof Error &&
+                "code" in error &&
+                typeof error.code === "string" &&
+                (/^08/.test(error.code) ||
+                  ["40001", "40P01", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT"].includes(error.code))
+              ? "Could not save the record. Retry with the same request_id."
+              : "Could not save the record.";
     return { isError: true, content: [{ type: "text" as const, text }] };
   }
 }
