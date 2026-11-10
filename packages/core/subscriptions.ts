@@ -121,12 +121,12 @@ function recurringMerchants(rows: readonly Transaction[], links: readonly z.infe
     });
 }
 
-function cycle(obligation: z.infer<typeof obligationSchema>, asOf: string) {
+function cycle(obligation: z.infer<typeof obligationSchema>, asOf: string, reference: "posting" | "due" = "posting") {
   const now = new Date(`${asOf}T00:00:00Z`);
-  const due = (year: number, month: number) => {
+  const due = (year: number, month: number, shifted = true) => {
     const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
     const grace =
-      obligation.cadence === "monthly"
+      obligation.cadence === "monthly" && shifted
         ? obligation.day_is_estimate
           ? ESTIMATED_EARLY_GRACE_DAYS
           : EARLY_GRACE_DAYS
@@ -137,8 +137,9 @@ function cycle(obligation: z.infer<typeof obligationSchema>, asOf: string) {
   };
   let year = now.getUTCFullYear();
   let month = obligation.cadence === "yearly" ? (obligation.due_month ?? 1) - 1 : now.getUTCMonth();
-  if (obligation.cadence === "monthly" && due(year, month + 1) <= asOf) month++;
-  if (due(year, month) > asOf) {
+  const shifted = reference === "posting";
+  if (obligation.cadence === "monthly" && due(year, month + 1, shifted) <= asOf) month++;
+  if (due(year, month, shifted) > asOf) {
     if (obligation.cadence === "yearly") year--;
     else month--;
   }
@@ -155,7 +156,7 @@ export function buildSubscriptionsCheck(
 ) {
   const debits = transactions.filter((row) => eligible(row, asOf)).toSorted(order);
   const subscriptions = obligations
-    .filter((row) => row.ended_on === null)
+    .filter((row) => row.ended_on === null || row.ended_on >= asOf)
     .map((obligation) => {
       const merchants = links
         .filter((entry) => entry.obligation_id === obligation.id)
@@ -172,7 +173,7 @@ export function buildSubscriptionsCheck(
       }
       const distinctCycles = [...cycles];
       const previous = distinctCycles.at(-2)?.[1].at(-1);
-      const interval = cycle(obligation, asOf);
+      const interval = cycle(obligation, asOf, "due");
       const charged = history.some((row) => row.posted_on >= interval.from && row.posted_on <= interval.through);
       const status: SubscriptionStatus = !merchants.length
         ? "not_linked"
@@ -207,7 +208,7 @@ export function buildSubscriptionsCheck(
     as_of: asOf,
     subscriptions,
     charged_after_end: obligations.flatMap((obligation) => {
-      if (obligation.ended_on === null) return [];
+      if (obligation.ended_on === null || obligation.ended_on >= asOf) return [];
       const merchants = links.filter((entry) => entry.obligation_id === obligation.id).map((entry) => entry.merchant);
       const endedOn = obligation.ended_on;
       const charges = debits.filter((row) => merchants.includes(row.merchant) && row.posted_on > endedOn);
@@ -226,10 +227,10 @@ export function buildSubscriptionsCheck(
     unrecorded_recurring_merchants: recurringMerchants(transactions, links, asOf),
     notes: [
       "USD expenses are positive. Refunds, credits, pending and excluded transactions never count as charges. Results reflect imported transactions only; missing does not establish cancellation.",
-      `Monthly cycles start ${EARLY_GRACE_DAYS} days before the clamped due date, or ${ESTIMATED_EARLY_GRACE_DAYS} when day_is_estimate, and end before the next such boundary. Yearly cycles start on the clamped due date. Missing due_day assumes day 1 and is flagged.`,
+      `Monthly cycles start ${EARLY_GRACE_DAYS} days before the clamped due date, or ${ESTIMATED_EARLY_GRACE_DAYS} when day_is_estimate, and end before the next such boundary. Status uses the cycle of the latest clamped due date on or before as_of. Yearly cycles start on the clamped due date. Missing due_day assumes day 1 and is flagged.`,
       "Yearly recurrence cannot yet be detected from the short imported history. A linked yearly subscription without a charge in its cycle is yearly_unknown, not evidence of cancellation.",
       `Monthly candidates need at least ${MIN_CHARGES} occurrences, grouping debits within ${DUPLICATE_WINDOW_DAYS} days of the occurrence's first debit. Gaps must be ${MONTHLY_MIN_DAYS}-${MONTHLY_MAX_DAYS} or ${TWO_MONTH_MIN_DAYS}-${TWO_MONTH_MAX_DAYS} days; the latest debit must be within ${MONTHLY_MAX_DAYS} days, or ${TWO_MONTH_MAX_DAYS} if the last gap was two months. Consecutive occurrence amounts (first debit) may differ by at most ${AMOUNT_TOLERANCE_BPS / 100n}% of the previous amount. Exact merchants only; all obligation links exclude candidates. Confirm evidence privately.`,
-      "Price compares the latest debit in each of the last two distinct charged cycles, across linked merchants and accounts. Duplicate cycles expose every debit date and evidence. Ended subscriptions with debits strictly after ended_on appear in charged_after_end.",
+      "Price compares the latest debit in each of the last two distinct charged cycles, across linked merchants and accounts. Duplicate cycles expose every debit date and evidence. Subscriptions remain active through ended_on. Once ended_on is before as_of, subscriptions with debits strictly after ended_on appear in charged_after_end.",
     ],
   };
 }
@@ -290,6 +291,10 @@ export async function linkSubscriptionMerchant(db: pg.ClientBase, input: unknown
         value.action === "unlink"
           ? `Merchant belongs to obligation ${existing.rows[0].obligation_id}; nothing was unlinked.`
           : "Merchant is already linked to another obligation. Unlink it there first.",
+      );
+    if (value.action === "unlink" && !existing.rows.length)
+      throw new InputError(
+        `Merchant ${value.merchant} is not linked to obligation ${value.obligation_id}; nothing was unlinked.`,
       );
     if (value.action === "link")
       await db.query(
