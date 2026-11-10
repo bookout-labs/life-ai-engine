@@ -15,7 +15,7 @@ Done when every file is in the table.
 
 ## 1. Whole script
 
-Start from current main, so the run judges the script as it is now. Find every caller: hooks config, workflows, package.json scripts, the rules registry, other scripts and skills. Measure how often it runs and how long one run takes. For hooks, the cost per call matters most, because it is paid on every matching tool call. Ask whether the whole script can go. Open its `Weed` issue.
+Finish the previous run's step 8 first, then start from current main, so the run judges the script as it is now. Find every caller: hooks config, workflows, package.json scripts, the rules registry, other scripts and skills. Measure how often it runs and how long one run takes. For hooks, the cost per call matters most, because it is paid on every matching tool call. Ask whether the whole script can go. Open its `Weed` issue.
 
 Done when the issue records the callers, frequency, run time and a whole-script verdict.
 
