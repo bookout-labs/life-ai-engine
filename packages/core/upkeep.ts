@@ -38,9 +38,14 @@ export async function listUpkeep(db: Database, from: string) {
     ), due as (
       select *, case when last_done_on is null then null
         when interval_months is not null then (last_done_on + make_interval(months => interval_months))::date
-        else (make_date(extract(year from last_done_on)::int + 1, yearly_month, 1)
-          + (least(yearly_day, extract(day from (make_date(extract(year from last_done_on)::int + 1, yearly_month, 1)
-            + interval '1 month - 1 day'))::int) - 1))::date end as next_due_on
+        else (select (make_date(y + 1, yearly_month, 1)
+          + least(yearly_day, extract(day from (make_date(y + 1, yearly_month, 1)
+            + interval '1 month - 1 day'))::int) - 1)::date
+          from generate_series(extract(year from last_done_on)::int - 1, extract(year from last_done_on)::int + 1) y
+          cross join lateral (select (make_date(y, yearly_month, 1)
+            + least(yearly_day, extract(day from (make_date(y, yearly_month, 1)
+              + interval '1 month - 1 day'))::int) - 1)::date as occurrence) dates
+          order by abs(last_done_on - occurrence), occurrence limit 1) end as next_due_on
       from history
     )
     select id::text, name, category, notes,
@@ -49,7 +54,7 @@ export async function listUpkeep(db: Database, from: string) {
       last_done_on::text, next_due_on::text,
       case when last_done_on is null then 'no_record' when next_due_on < $1::date then 'overdue'
         when next_due_on = $1::date then 'due' else 'upcoming' end as status
-    from due order by next_due_on nulls last, id`,
+    from due order by next_due_on nulls last, due.id`,
     [from],
   );
   return z.array(upkeepSchema).parse(rows);
@@ -66,6 +71,13 @@ export async function upkeepDue(db: Database, from: string, days: number) {
 
 export async function logUpkeepCompletion(db: Database, input: z.input<typeof logUpkeepCompletionSchema>) {
   const data = logUpkeepCompletionSchema.parse(input);
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  if (data.completed_on > today) throw new Error("Completion date cannot be in the future");
   const { rows } = await db.query(
     `insert into upkeep_completions (request_id, task_id, completed_on, notes) values ($1, $2, $3, $4)
       on conflict (request_id) do nothing returning ${completionColumns}`,
