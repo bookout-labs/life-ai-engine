@@ -230,3 +230,24 @@ test("database bills and money check agree, and today carries only the money sum
     await db.end();
   }
 });
+
+test("same-day overdue and price increases use numeric obligation order", () => {
+  const ids = ["11", "2", "10"];
+  const result = buildMoneyCheck(
+    ids.map((id) => ({ ...obligation, id })),
+    ids.flatMap((id) => [
+      charge("2039-12-01", "10.00", { obligation_id: id, paid_on: "2039-12-01" }),
+      charge("2040-01-01", "20.00", { obligation_id: id }),
+    ]),
+    "2040-01-10",
+    [],
+  );
+  assert.deepEqual(
+    result.overdue.map((row) => row.obligation_id),
+    ["2", "10", "11"],
+  );
+  assert.deepEqual(
+    result.price_increases.map((row) => row.obligation_id),
+    ["2", "10", "11"],
+  );
+});

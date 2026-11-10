@@ -128,7 +128,12 @@ export function buildMoneyCheck(
     }
   }
   const order = (a: { due_on: string; obligation_id: string }, b: { due_on: string; obligation_id: string }) =>
-    a.due_on.localeCompare(b.due_on) || a.obligation_id.localeCompare(b.obligation_id);
+    a.due_on.localeCompare(b.due_on) ||
+    (BigInt(a.obligation_id) < BigInt(b.obligation_id)
+      ? -1
+      : BigInt(a.obligation_id) > BigInt(b.obligation_id)
+        ? 1
+        : 0);
   const total = (items: readonly { amount: string | null }[]) =>
     decimal(items.reduce((sum, entry) => sum + (entry.amount === null ? 0n : cents(entry.amount)), 0n));
   return {
