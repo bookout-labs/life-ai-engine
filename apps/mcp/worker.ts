@@ -60,6 +60,8 @@ import { stalePages } from "../../packages/core/stale-pages.ts";
 import {
   linkSubscriptionMerchant,
   linkSubscriptionMerchantSchema,
+  recordReceiptCharge,
+  recordReceiptChargeSchema,
   subscriptionsCheck,
   subscriptionsCheckSchema,
 } from "../../packages/core/subscriptions.ts";
@@ -160,13 +162,22 @@ export function tools(env: Env): McpServer {
     "subscriptions_check",
     {
       description:
-        "Compare active subscription obligations to exact linked transaction merchants through as_of, default today in America/Chicago. Shows actual last debit and payer, prices across distinct charged cycles, duplicate debit dates, early-posting-aware monthly cycles selected by the latest clamped due date on or before as_of, missing and unlinked subscriptions, yearly uncertainty, scheduled cancellations active through ended_on, ended subscriptions still charging and monthly unrecorded merchant candidates with evidence. Imported history only; confirm flags privately before updating the inventory.",
+        "Compare active subscription obligations to exact linked bank merchants and obligation-specific email receipt charges through as_of, default today in America/Chicago. Shows actual last debit and payer, prices across distinct charged cycles, duplicate debit dates, early-posting-aware monthly cycles selected by the latest clamped due date on or before as_of, missing and unlinked subscriptions, yearly uncertainty, scheduled cancellations active through ended_on, ended subscriptions still charging and monthly unrecorded merchant candidates with evidence. Imported bank and recorded receipt history only. Receipt evidence is labeled receipt and never enters spending. Receipt-evidenced plans without a cycle charge are missing_this_cycle, including yearly plans. Confirm flags privately before updating the inventory.",
       inputSchema: subscriptionsCheckSchema,
       annotations: { readOnlyHint: true },
     },
     async (input) => ({
       content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => subscriptionsCheck(db, input))) }],
     }),
+  );
+  server.registerTool(
+    "record_receipt_charge",
+    {
+      description:
+        "Record a confirmed USD email receipt charge for a subscription obligation, including app-store or wallet billing. Read the mailbox privately through its connector; this tool does not read mail. Use the email message id as source_ref. One message records one plan charge. Reuse request_id on retries to replay the original result. A repeated source_ref with identical charge details returns the saved charge; different details are rejected. Amount must be positive. Receipt evidence never enters spending because bank transactions already hold the money movement. Confirm plan, date and amount privately before recording.",
+      inputSchema: recordReceiptChargeSchema,
+    },
+    async (input) => writeResult(env, (db) => recordReceiptCharge(db, input)),
   );
   server.registerTool(
     "link_subscription_merchant",
