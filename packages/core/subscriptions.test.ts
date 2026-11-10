@@ -276,7 +276,7 @@ test("negative fractional credits never become charges or candidates", () => {
 
 test("subscription tools save replayable links and return specific MCP input errors", {
   skip: !process.env.SUBSCRIPTIONS_TEST_DATABASE_URL,
-}, async () => {
+}, async (t) => {
   const { readFile } = await import("node:fs/promises");
   const { registerHooks } = await import("node:module");
   const { createMcpHandler } = await import("@modelcontextprotocol/server");
@@ -310,12 +310,11 @@ test("subscription tools save replayable links and return specific MCP input err
     }
     const ids = (
       await db.query(
-        "insert into obligations(name,kind,cadence,due_day) values ('Synthetic subscription','subscription','monthly',31),('Synthetic bill','bill','monthly',1),('Synthetic transfer','transfer','monthly',1) returning id::text",
+        "insert into obligations(name,kind,cadence,due_day) values ('Synthetic subscription','subscription','monthly',31),('Synthetic bill','bill','monthly',1) returning id::text",
       )
     ).rows;
     const subscription = ids[0].id;
     const bill = ids[1].id;
-    const transfer = ids[2].id;
     const url = new URL(process.env.SUBSCRIPTIONS_TEST_DATABASE_URL ?? "");
     url.searchParams.set("options", `-c search_path=${namespace}`);
     const call = async (name: string, args: unknown) => {
@@ -337,13 +336,67 @@ test("subscription tools save replayable links and return specific MCP input err
       merchant: "Synthetic merchant",
       action: "link" as const,
     };
-    for (const [obligation_id, expected] of [
-      ["9223372036854775807", "Obligation 9223372036854775807 not found."],
-      [transfer, "Only subscription or bill obligations can link merchants."],
-    ]) {
-      const result = await call("link_subscription_merchant", { ...command, obligation_id });
-      assert.equal(result.isError, true);
-      assert.equal(result.content[0].text, expected);
+    const unknown = await call("link_subscription_merchant", { ...command, obligation_id: "9223372036854775807" });
+    assert.equal(unknown.isError, true);
+    assert.equal(unknown.content[0].text, "Obligation 9223372036854775807 not found.");
+    for (const kind of ["loan", "transfer", "card", "investment"]) {
+      await t.test(`${kind} merchant links through core and MCP suppress subscription candidates`, async (kindTest) => {
+        const recorded = await db.query(
+          "insert into obligations(name,kind,cadence,due_day) values ($1,$2,'monthly',1) returning id::text",
+          [`Synthetic ${kind}`, kind],
+        );
+        const obligation_id = recorded.rows[0].id;
+        const merchant = `Synthetic ${kind} merchant`;
+        await db.query(
+          "insert into transactions(source,source_id,posted_on,amount,merchant,category,account_ref,pending) values ('fixture',$1,'2040-03-31',10,$3,'fixture','fixture-card',false),('fixture',$2,'2040-04-30',10,$3,'fixture','fixture-card',false)",
+          [`${kind}-first`, `${kind}-second`, merchant],
+        );
+        const before = await subscriptionsCheck(db, { as_of: "2040-05-15" });
+        assert.ok(before.unrecorded_recurring_merchants.some((row) => row.merchant === merchant));
+        const input = { ...command, request_id: crypto.randomUUID(), obligation_id, merchant };
+        await kindTest.test(`${kind} core link excludes the merchant`, async () => {
+          assert.deepEqual(await linkSubscriptionMerchant(db, input), { obligation_id, merchant, linked: true });
+          const linked = await subscriptionsCheck(db, { as_of: "2040-05-15" });
+          assert.ok(!linked.unrecorded_recurring_merchants.some((row) => row.merchant === merchant));
+          assert.deepEqual(
+            linked.subscriptions.map((row) => row.obligation_id),
+            [subscription],
+          );
+          assert.deepEqual(linked.charged_after_end, []);
+          await linkSubscriptionMerchant(db, { ...input, request_id: crypto.randomUUID(), action: "unlink" });
+          const unlinked = await subscriptionsCheck(db, { as_of: "2040-05-15" });
+          assert.ok(unlinked.unrecorded_recurring_merchants.some((row) => row.merchant === merchant));
+        });
+        await kindTest.test(`${kind} MCP link excludes the merchant`, async () => {
+          const request = { ...input, request_id: crypto.randomUUID() };
+          const saved = await call("link_subscription_merchant", request);
+          assert.equal(saved.isError, undefined);
+          assert.deepEqual(JSON.parse(saved.content[0].text), { obligation_id, merchant, linked: true });
+          assert.deepEqual(await call("link_subscription_merchant", request), saved);
+          const read = await call("subscriptions_check", { as_of: "2040-05-15" });
+          assert.equal(read.isError, undefined);
+          const report = JSON.parse(read.content[0].text);
+          assert.ok(
+            !report.unrecorded_recurring_merchants.some((row: { merchant: string }) => row.merchant === merchant),
+          );
+          assert.deepEqual(
+            report.subscriptions.map((row: { obligation_id: string }) => row.obligation_id),
+            [subscription],
+          );
+          assert.deepEqual(report.charged_after_end, []);
+          await db.query("update obligations set ended_on = '2040-04-01' where id = $1", [obligation_id]);
+          const ended = await call("subscriptions_check", { as_of: "2040-05-15" });
+          const endedReport = JSON.parse(ended.content[0].text);
+          assert.deepEqual(endedReport.charged_after_end, []);
+          assert.deepEqual(
+            endedReport.subscriptions.map((row: { obligation_id: string }) => row.obligation_id),
+            [subscription],
+          );
+          assert.ok(
+            !endedReport.unrecorded_recurring_merchants.some((row: { merchant: string }) => row.merchant === merchant),
+          );
+        });
+      });
     }
     const missingUnlink = { ...command, action: "unlink", request_id: crypto.randomUUID() };
     const missingMessage = `Merchant ${command.merchant} is not linked to obligation ${subscription}; nothing was unlinked.`;
