@@ -16,7 +16,9 @@ import { payoffExplorer, payoffInputSchema } from "../../packages/core/amortize.
 import { billsDue, deadlinesDue } from "../../packages/core/bills.ts";
 import { accounts, budgetTargets } from "../../packages/core/finances.ts";
 import { investmentBuys } from "../../packages/core/investment-buys.ts";
+import { logWorkout, logWorkoutSchema } from "../../packages/core/log-workout.ts";
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
+import { recordInvestmentBuy, recordInvestmentBuySchema } from "../../packages/core/record-investment-buy.ts";
 import { schedule, today } from "../../packages/core/schedule.ts";
 import { publicOrigin } from "./origin.ts";
 
@@ -92,6 +94,26 @@ function tools(env: Env): McpServer {
     }),
   );
   server.registerTool(
+    "record_investment_buy",
+    {
+      description:
+        "Record a planned or completed investment buy. Amount is a positive decimal string in dollars. Generate request_id once per logical buy and reuse it on every retry. A reused ID returns the original buy without updating it.",
+      inputSchema: recordInvestmentBuySchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => writeResult(env, (db) => recordInvestmentBuy(db, input)),
+  );
+  server.registerTool(
+    "log_workout",
+    {
+      description:
+        "Log a finished training session and its blocks atomically. Positions define block order. Weight is a decimal string with lb or kg. Generate request_id once per session and reuse it on every retry. A reused ID returns the original session and block IDs without updating them.",
+      inputSchema: logWorkoutSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => writeResult(env, (db) => logWorkout(db, input)),
+  );
+  server.registerTool(
     "payoff_explorer",
     {
       description:
@@ -145,6 +167,19 @@ function tools(env: Env): McpServer {
     },
   );
   return server;
+}
+
+async function writeResult<T>(env: Env, use: (client: pg.Client) => Promise<T>) {
+  try {
+    const result = await withDb(env, use);
+    return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+  } catch (error) {
+    const text =
+      error instanceof pg.DatabaseError && error.code?.startsWith("23")
+        ? `Record rejected by database constraint ${error.constraint ?? error.code}. Check the input fields.`
+        : "Could not save the record. Retry with the same request_id.";
+    return { isError: true, content: [{ type: "text" as const, text }] };
+  }
 }
 
 // Client names come from self-registration, so an attacker picks them.
