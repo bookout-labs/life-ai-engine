@@ -69,7 +69,7 @@ try {
     );
   }
 
-  const { reviewer, review } = runReview(agentOf(body), base, head, `${card.title}\n${card.body}`);
+  const { reviewer, review } = runReview(agentOf(body), base, head, `${card.title}\n${card.body}`, title);
   const text = render(review);
   // The reviewer reads untrusted diffs; if one coaxed a reviewer login into the review, never publish it.
   const logins = [process.env.CLAUDE_CODE_OAUTH_TOKEN ?? ""];
