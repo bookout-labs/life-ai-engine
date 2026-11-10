@@ -22,6 +22,7 @@ import { readMoneyCheck } from "../../packages/core/money-check.ts";
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
 import { recordInvestmentBuy, recordInvestmentBuySchema } from "../../packages/core/record-investment-buy.ts";
 import { schedule, today } from "../../packages/core/schedule.ts";
+import { readSpending, spendingInputSchema } from "../../packages/core/spending.ts";
 import { trainingTrend, trainingTrendSchema } from "../../packages/core/training-trend.ts";
 import { publicOrigin } from "./origin.ts";
 
@@ -84,6 +85,18 @@ function tools(env: Env): McpServer {
     },
     async ({ from = today() }) => ({
       content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => readMoneyCheck(db, from))) }],
+    }),
+  );
+  server.registerTool(
+    "spending",
+    {
+      description:
+        "Read USD spending for a month (YYYY-MM), optionally by category, through today in America/Chicago. Includes category targets, calendar-day pace, top 10 merchants and unusual-charge cues from loaded history. Draft targets are proposals. Expenses positive; credits negative. Pending, transfer, hidden and income rows excluded. No import capability.",
+      inputSchema: spendingInputSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => readSpending(db, input))) }],
     }),
   );
   server.registerTool(

@@ -497,6 +497,31 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: transactions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.transactions (
+    source text NOT NULL,
+    source_id text NOT NULL,
+    posted_on date NOT NULL,
+    amount numeric(12,2) NOT NULL,
+    merchant text NOT NULL,
+    category text NOT NULL,
+    account_ref text NOT NULL,
+    pending boolean NOT NULL,
+    exclusion_reason text,
+    CONSTRAINT transactions_account_ref_check CHECK (((account_ref = btrim(account_ref)) AND (account_ref ~ '\S'::text))),
+    CONSTRAINT transactions_amount_check CHECK ((amount <> 'NaN'::numeric)),
+    CONSTRAINT transactions_category_check CHECK (((category = btrim(category)) AND (category ~ '\S'::text))),
+    CONSTRAINT transactions_exclusion_reason_check CHECK ((exclusion_reason = ANY (ARRAY['transfer'::text, 'hidden'::text, 'income'::text]))),
+    CONSTRAINT transactions_merchant_check CHECK (((merchant = btrim(merchant)) AND (merchant ~ '\S'::text))),
+    CONSTRAINT transactions_posted_on_check CHECK (isfinite(posted_on)),
+    CONSTRAINT transactions_source_check CHECK (((source = btrim(source)) AND (source ~ '\S'::text))),
+    CONSTRAINT transactions_source_id_check CHECK (((source_id = btrim(source_id)) AND (source_id ~ '\S'::text)))
+);
+
+
+--
 -- Name: workout_blocks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -789,6 +814,14 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
+-- Name: transactions transactions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transactions
+    ADD CONSTRAINT transactions_pkey PRIMARY KEY (source, source_id);
+
+
+--
 -- Name: workout_blocks workout_blocks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -839,6 +872,13 @@ CREATE INDEX page_revisions_history ON public.page_revisions USING btree (page_i
 --
 
 CREATE INDEX pages_search ON public.pages USING gin (search) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: transactions_posted_on_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX transactions_posted_on_idx ON public.transactions USING btree (posted_on);
 
 
 --
@@ -982,4 +1022,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110120000'),
     ('20261110150000'),
     ('20261110160000'),
-    ('20261110170000');
+    ('20261110170000'),
+    ('20261110180000');
