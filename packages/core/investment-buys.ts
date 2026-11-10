@@ -18,7 +18,7 @@ export async function investmentBuys(db: pg.ClientBase | pg.Pool) {
     `select id::text, state, symbol, account_ref, planned_on::text, planned_condition,
             executed_on::text, amount::text
        from investment_buys
-      order by coalesce(executed_on, planned_on) nulls last, id`,
+      order by coalesce(executed_on, planned_on) nulls last, investment_buys.id`,
   );
   const buys = z.array(buySchema).parse(rows);
   return {

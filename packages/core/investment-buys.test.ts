@@ -44,6 +44,17 @@ test("investment buys enforce states and report remaining and completed rows", {
         ),
       );
     }
+
+    await db.query("delete from investment_buys");
+    for (const id of [11, 2, 10])
+      await db.query(
+        "insert into investment_buys(id, state, symbol, account_ref, planned_on) overriding system value values ($1, 'planned', 'ABC', 'Fixture', '2040-01-01')",
+        [id],
+      );
+    assert.deepEqual(
+      (await investmentBuys(db)).planned.map((buy) => buy.id),
+      ["2", "10", "11"],
+    );
     await db.query(down);
     await assert.rejects(investmentBuys(db));
   } finally {
