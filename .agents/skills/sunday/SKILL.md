@@ -15,4 +15,6 @@ Call the Life AI MCP tool `subscriptions_check`. Show subscriptions missing this
 
 Review active goals by area through the Life AI MCP tool `goals` and follow each plan page for progress; report an unavailable tool explicitly. When a goal is met or abandoned, mark it with `set_goal_status`.
 
+On the first Sunday of each month, call the Life AI MCP tool `stale_pages`, check each reason against its page, and draft a fix for each real one in the agenda for the household to approve; edit pages only after approval.
+
 Read current weekly and areas pages through pages.ts for household check-in preferences, routine, decisions and questions. Use the command's records for commitments and money due. Do not extract record tables from prose pages or treat missing spending, training or investment history as zero. Report unavailable sources privately. Prepare a short dashboard, write weekly/<date> through pages.ts and update the huddle data through its connected storage. Scheduled preparation may read connected sources and write private pages. Sending email requires an explicit current authorization and recipients read from private settings. Never embed recipients or household names in this procedure.
