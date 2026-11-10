@@ -201,7 +201,7 @@ export function tools(env: Env): McpServer {
     "upkeep",
     {
       description:
-        "List home and vehicle upkeep with schedules, latest completion and next due date, oldest due first. No history means no_record and a null next date. Monthly intervals clamp to month end. A yearly completion satisfies the nearest scheduled occurrence, with ties going to the earlier occurrence; the next due date follows that occurrence. Missed dates remain overdue. from defaults to today in America/Chicago.",
+        "List home and vehicle upkeep with schedules, latest completion and next due date, oldest due first. Without history, interval tasks have no_record and a null next date; yearly tasks show their next occurrence. Monthly intervals clamp to month end. A yearly completion satisfies the nearest scheduled occurrence, with ties going to the earlier occurrence; the next due date follows that occurrence. Missed dates remain overdue. from defaults to today in America/Chicago.",
       inputSchema: z.object({ from: z.iso.date().optional() }),
       annotations: { readOnlyHint: true },
     },
