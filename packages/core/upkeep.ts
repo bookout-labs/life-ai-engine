@@ -37,7 +37,12 @@ export async function listUpkeep(db: Database, from: string) {
       select t.*, (select max(completed_on) from upkeep_completions where task_id = t.id
         and completed_on <= $1::date) as last_done_on from upkeep_tasks t
     ), due as (
-      select *, case when last_done_on is null then null
+      select *, case when last_done_on is null and interval_months is not null then null
+        when last_done_on is null then (select occurrence from generate_series(extract(year from $1::date)::int, extract(year from $1::date)::int + 1) y
+          cross join lateral (select (make_date(y, yearly_month, 1)
+            + least(yearly_day, extract(day from (make_date(y, yearly_month, 1)
+              + interval '1 month - 1 day'))::int) - 1)::date as occurrence) dates
+          where occurrence >= $1::date order by occurrence limit 1)
         when interval_months is not null then (last_done_on + make_interval(months => interval_months))::date
         else (select (make_date(y + 1, yearly_month, 1)
           + least(yearly_day, extract(day from (make_date(y + 1, yearly_month, 1)
@@ -53,7 +58,7 @@ export async function listUpkeep(db: Database, from: string) {
       case when interval_months is not null then jsonb_build_object('kind', 'interval', 'months', interval_months)
         else jsonb_build_object('kind', 'yearly', 'month', yearly_month, 'day', yearly_day) end as schedule,
       last_done_on::text, next_due_on::text,
-      case when last_done_on is null then 'no_record' when next_due_on < $1::date then 'overdue'
+      case when next_due_on is null then 'no_record' when next_due_on < $1::date then 'overdue'
         when next_due_on = $1::date then 'due' else 'upcoming' end as status
     from due order by next_due_on nulls last, due.id`,
     [from],

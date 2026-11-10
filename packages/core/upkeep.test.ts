@@ -40,6 +40,27 @@ test("upkeep derives monthly dates and preserves unknown history", {
       "insert into upkeep_tasks (name, category, yearly_month, yearly_day) values ('Synthetic yearly check', 'vehicle', 6, 1) returning id::text",
     );
     assert.ok(annual);
+    assert.equal((await listUpkeep(db, "2026-11-10")).find((t) => t.id === annual.id)?.next_due_on, "2027-06-01");
+    assert.equal(
+      (await upkeepDue(db, "2026-11-10", 7)).some((t) => t.id === annual.id),
+      false,
+    );
+    assert.equal((await upkeepDue(db, "2027-05-28", 7)).find((t) => t.id === annual.id)?.status, "upcoming");
+    assert.equal((await upkeepDue(db, "2027-06-01", 7)).find((t) => t.id === annual.id)?.status, "due");
+    const {
+      rows: [unrecordedLeap],
+    } = await db.query(
+      "insert into upkeep_tasks (name, category, yearly_month, yearly_day) values ('Synthetic leap', 'home', 2, 29) returning id::text",
+    );
+    assert.equal(
+      (await listUpkeep(db, "2027-01-10")).find((t) => t.id === unrecordedLeap.id)?.next_due_on,
+      "2027-02-28",
+    );
+    assert.equal(
+      (await listUpkeep(db, "2027-03-01")).find((t) => t.id === unrecordedLeap.id)?.next_due_on,
+      "2028-02-29",
+    );
+    await db.query("delete from upkeep_tasks where id = $1", [unrecordedLeap.id]);
     await logUpkeepCompletion(db, { request_id: randomUUID(), task_id: annual.id, completed_on: "2040-06-01" });
     assert.equal((await listUpkeep(db, "2041-05-31")).find((t) => t.id === annual.id)?.next_due_on, "2041-06-01");
     assert.equal((await listUpkeep(db, "2041-06-01")).find((t) => t.id === annual.id)?.status, "due");
