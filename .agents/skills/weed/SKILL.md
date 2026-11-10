@@ -1,6 +1,6 @@
 ---
 name: weed
-description: Weed one script, hook or workflow down to what Life AI must own. Use when Joe names a script to weed, trim, audit or reduce, asks which parts a platform already does better, or asks what is left to weed.
+description: Weed one script, hook, skill or workflow, or a whole process, down to what Life AI must own. Use when Joe names a script, skill or process to weed, trim, audit or reduce, asks which parts a platform already does better, or asks what is left to weed.
 ---
 
 Weeding takes one script per run, in stages, and each stage ends at Joe. Joe decides; the run builds nothing until he has chosen. The final form is the frame: one public engine repo, every thread in its own T3 worktree, personal data in Neon and R2.
@@ -9,19 +9,25 @@ The ledger is the Builds board: one issue per script, titled `Weed <path>`. It h
 
 ## 0. Queue, when Joe asks what is left
 
-List every script under `.agents/`, every hook wired in `.claude/settings.json` and `.codex/hooks.json`, and every workflow, with line counts, test line counts and `Weed` status. Show it as a table.
+List every code file under `.agents/`, `packages/` and `apps/`, every hook wired in `.claude/settings.json` and `.codex/hooks.json`, every GitHub workflow and every skill, with line counts, test line counts and `Weed` status. Show it as a table. Answer "what is left" from this table, never from open issues.
 
 Done when every file is in the table.
 
+## Process runs
+
+When Joe names a process, such as build → save → gate → merge → ship, the unit is the chain. Step 1 traces one real run end to end from transcripts, PRs and Actions logs: every script, hook, agent turn, model call and wait, with wall-clock time. In step 2 the pieces are the hops between them, and step 3 asks whether a platform owns a whole hop. A process run only finds; each script it changes is built as its own script weed.
+
+Done when the trace covers one real run with times, and every hop has a verdict.
+
 ## 1. Whole script
 
-Finish the previous run's step 8 first, then start from current main, so the run judges the script as it is now. Find every caller: hooks config, workflows, package.json scripts, the rules registry, other scripts and skills. Measure how often it runs and how long one run takes. For hooks, the cost per call matters most, because it is paid on every matching tool call. Ask whether the whole script can go. Open its `Weed` issue.
+Finish the previous run's step 8 first, then start from current main, so the run judges the script as it is now. Find every caller: hooks config, workflows, package.json scripts, the rules registry, other scripts and skills. Find why it was created: the commit, issue and Joe's decisions behind it, including in the repo it came from. Measure how often it runs and how long one run takes. For hooks, the cost per call matters most, because it is paid on every matching tool call. Ask whether the whole script can go. Open its `Weed` issue.
 
-Done when the issue records the callers, frequency, run time and a whole-script verdict.
+Done when the issue records the origin, callers, frequency, run time and a whole-script verdict.
 
 ## 2. Inventory
 
-Read the script end to end, plus everything it imports and its tests. Split it into pieces: contiguous line ranges that each do one job. For each piece, name the real failure it prevents, citing the PR, issue or incident from git log and the board. A piece with no failure behind it is speculative machinery. A piece that never runs may be switched off rather than unwanted: check Joe's environment, user config and sibling repos before calling it dead.
+Read the script end to end, plus everything it imports and its tests. Split it into pieces: contiguous line ranges that each do one job. For each piece, name the real failure it prevents, citing the PR, issue or incident from git log and the board. For a skill or process, a piece is a step, rule or hop, and its cost is the tokens it loads and the turns it causes. A piece an agent does the same way every time should become a script: a script costs no tokens and runs the same every time. A piece with no failure behind it is speculative machinery. A piece that never runs may be switched off rather than unwanted: check Joe's environment, user config and sibling repos before calling it dead.
 
 Done when every line belongs to exactly one piece, and each piece has a line range, one plain sentence, and a cited failure or "none found".
 
@@ -34,24 +40,24 @@ For each piece, find whether one of these already does the job:
 - Cloudflare;
 - Neon;
 - git itself;
-- a maintained open-source package;
+- a maintained open-source package, called through its own entry point (going around it for speed rebuilds it);
 - existing code elsewhere in this repo. A sibling repo shows what Joe wants, not how to build it; its code has not been weeded, so don't copy it.
 
 Use current primary docs and the `lab` skill's research order. Cite each source and mark every claim confirmed or unverified.
 
-Done when every piece has a verdict of Keep, Platform (naming the feature), Reuse (naming the file), Delete, or Joe's call, and every Platform or Reuse verdict has its citation.
+Done when every piece has a verdict of Keep, Platform (naming the feature), Reuse (naming the file), Script (naming the new or existing script), Delete, or Joe's call, and every Platform or Reuse verdict has its citation.
 
 ## 4. Counter-case
 
-For every piece marked Platform, Reuse or Delete, argue for keeping it. Ask whether the local version:
+For every piece marked Platform, Reuse, Script or Delete, argue for keeping it. For Script, ask whether the step needs judgment a script can't give. Ask whether the local version:
 - saves tokens (a blocking wait costs none; a wake-up costs a turn);
 - saves wall-clock time (it fails before a push or CI round trip);
 - adds safety;
 - gives control (structured output, deterministic blocking).
 
-Flip the verdict when the local version wins, and say what it wins on.
+List every capability lost, per agent, even small ones. When a verdict reverses an earlier decision of Joe's, quote it and say what has changed since. Flip the verdict when the local version wins, and say what it wins on.
 
-Done when each Platform, Reuse or Delete verdict carries a one-line answer to "what would we lose?"
+Done when each Platform, Reuse, Script or Delete verdict carries a one-line answer to "what would we lose?"
 
 ## 5. Snapshot
 
