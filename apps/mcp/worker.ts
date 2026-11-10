@@ -77,7 +77,7 @@ function tools(env: Env): McpServer {
     "money_check",
     {
       description:
-        "Read money needing attention from today through day six. Returns unpaid bills, overdue charges, and the latest confirmed price increase per active obligation. Projected amounts are estimates; unknown amounts are null and counted separately from totals. Percent increases are rounded to two decimals, or null for a zero baseline. No spending or transaction anomaly analysis.",
+        "Read money needing attention from today through day six. Returns bills_due rows unchanged, overdue charges from the past 60 days, a stale_unpaid count for older unpaid charges, and the latest confirmed price increase per active obligation. Amount and date estimate flags come from bills_due; unknown amounts are null and counted separately from decimal totals. Percent increases are rounded to two decimals, or null for a zero baseline. No spending or transaction anomaly analysis.",
       inputSchema: z.object({ from: z.iso.date().optional() }),
       annotations: { readOnlyHint: true },
     },
