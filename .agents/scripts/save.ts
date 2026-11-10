@@ -60,8 +60,13 @@ if (exists === 0) refs.push(remote);
 else if (exists !== 1) fail("Cannot establish remote branch status.");
 for (const ref of refs) {
   const status = spawnSync("git", ["merge-base", "--is-ancestor", ref, "HEAD"]).status;
-  if (status === 1) fail(`Branch is stale. ${update(ref)}`);
-  if (status !== 0) fail("git merge-base failed. Cannot establish branch freshness.");
+  if (status !== 0 && status !== 1) fail("git merge-base failed. Cannot establish branch freshness.");
+  // A stale branch takes a clean merge itself; a conflict or an overlapping edit still stops for the agent.
+  if (status === 1 && spawnSync("git", ["merge", "--no-edit", ref], { stdio: "pipe" }).status !== 0) {
+    spawnSync("git", ["merge", "--abort"], { stdio: "pipe" });
+    fail(`Branch is stale and ${ref} does not merge cleanly. ${update(ref)}`);
+  }
+  if (status === 1) console.log(`Merged ${ref}`);
 }
 function canonical(path: string): string {
   try {

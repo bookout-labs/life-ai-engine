@@ -335,7 +335,7 @@ test("ancestor symlink stages only the link", (t) => {
   assert.equal(f.git("diff", "--cached", "--name-status"), "A\t.claude/root");
 });
 
-test("stale pushed branch can update with dirty edits and re-save without rewriting its PR head", (t) => {
+test("stale pushed branch merges origin/main itself with dirty edits and keeps its PR head", (t) => {
   const f = fixture(t);
   f.put("docs/note.md", "first save");
   f.git("add", "docs/note.md");
@@ -351,17 +351,31 @@ test("stale pushed branch can update with dirty edits and re-save without rewrit
   f.put("docs/note.md", "unsaved");
   const result = f.run({}, "docs/note.md");
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /git merge --autostash origin\/main/);
-  assert.match(result.stderr, /origin\/main/);
-  assert.equal(f.git("diff", "--cached", "--name-only"), "");
-  assert.equal(f.git("show", "origin/main:other.md"), "upstream edit");
-  f.git("merge", "--autostash", "origin/main");
+  assert.match(result.stdout, /Merged origin\/main/);
+  assert.match(result.stderr, /proof|issue/i);
   assert.equal(f.git("merge-base", "--is-ancestor", oldHead, "HEAD"), "");
-  const resumed = f.run({}, "docs/note.md");
-  assert.equal(resumed.status, 1);
-  assert.match(resumed.stderr, /proof|issue/i);
+  assert.equal(f.git("merge-base", "--is-ancestor", "origin/main", "HEAD"), "");
   assert.equal(f.git("show", ":docs/note.md"), "unsaved");
   assert.equal(f.git("diff", "--cached", "--name-only"), "docs/note.md");
+});
+
+test("stale branch that conflicts with origin/main stops before staging with recovery advice", (t) => {
+  const f = fixture(t);
+  f.git("switch", "main");
+  f.put("docs/note.md", "upstream");
+  f.git("add", "docs/note.md");
+  f.git("commit", "-m", "advance main");
+  execFileSync("git", ["--git-dir", join(f.dir, "remote"), "fetch", f.repo, "main:main"], { stdio: "pipe" });
+  f.git("switch", "work");
+  f.put("docs/note.md", "mine");
+  f.git("add", "docs/note.md");
+  f.git("commit", "-m", "mine");
+  const head = f.git("rev-parse", "HEAD");
+  const result = f.run({}, "docs/note.md", ...args);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /does not merge cleanly.*git merge --autostash origin\/main/);
+  assert.equal(f.git("rev-parse", "HEAD"), head);
+  assert.equal(f.git("status", "--porcelain"), "");
 });
 
 test("current worktrees save concurrently to separate remote branches", async (t) => {
@@ -408,7 +422,7 @@ for (const command of ["fetch", "merge-base"]) {
   });
 }
 
-test("remote branch advance refuses before staging and permits recovery", (t) => {
+test("remote branch advance merges itself before saving", (t) => {
   const f = fixture(t);
   execFileSync("git", ["--git-dir", join(f.dir, "remote"), "fetch", f.repo, "work:work"], { stdio: "pipe" });
   f.git("switch", "-c", "remote-change");
@@ -419,14 +433,10 @@ test("remote branch advance refuses before staging and permits recovery", (t) =>
   f.git("switch", "work");
   const head = f.git("rev-parse", "HEAD");
   f.put("docs/note.md", "local change");
-  const result = f.run({}, "docs/note.md", ...args);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /git merge --autostash origin\/work/);
-  assert.equal(f.git("diff", "--cached", "--name-only"), "");
-  assert.equal(f.git("rev-parse", "HEAD"), head);
-  f.git("merge", "--autostash", "origin/work");
   const resumed = f.run({ REAL_PUSH: "1" }, "docs/note.md", ...args);
   assert.equal(resumed.status, 0, resumed.stderr);
+  assert.match(resumed.stdout, /Merged origin\/work/);
+  assert.equal(f.git("merge-base", "--is-ancestor", head, "HEAD"), "");
   assert.equal(
     f.git("rev-parse", "HEAD"),
     execFileSync("git", ["--git-dir", join(f.dir, "remote"), "rev-parse", "work"], { encoding: "utf8" }).trim(),
