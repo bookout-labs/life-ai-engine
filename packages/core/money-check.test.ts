@@ -59,6 +59,12 @@ test("latest confirmed price compares with its predecessor, skipping estimates a
   );
 });
 
+test("price increases expire after 60 days, including the boundary day", () => {
+  const history = [charge("2039-10-01", "10.00"), charge("2039-11-11", "12.00")];
+  assert.equal(buildMoneyCheck([obligation], history, "2040-01-10", []).price_increases.length, 1);
+  assert.deepEqual(buildMoneyCheck([obligation], history, "2040-01-11", []).price_increases, []);
+});
+
 test("due-soon uses supplied bills, preserves flags and nulls, and sums decimal cents", () => {
   const bills = [
     {
@@ -124,6 +130,18 @@ test("database bills and money check agree, and today carries only the money sum
     const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
     await db.query(schema.replace(/^\\.*$/gm, ""));
     await db.query("set search_path to public");
+    await db.query(`insert into obligations (name, kind, cadence, due_day, day_is_estimate)
+      values ('Synthetic off-day', 'bill', 'monthly', 12, true);
+      insert into charges (obligation_id, due_on, amount) values (1, '2041-01-11', 80.00);`);
+    const offDay = await readToday(db, "2041-01-12T12:00:00Z");
+    assert.ok(offDay.money_check);
+    assert.deepEqual(offDay.money_check.totals, { due_soon: "0.00", overdue: "80.00", due_soon_unknown: 0 });
+    assert.deepEqual(offDay.bills, []);
+    assert.deepEqual(
+      offDay.money_check.overdue.map((entry) => [entry.due_on, entry.amount]),
+      [["2041-01-11", "80.00"]],
+    );
+    await db.query("truncate charges, obligations restart identity cascade");
     await db.query(`insert into obligations (name, kind, cadence, due_day, day_is_estimate) values
       ('Synthetic A', 'bill', 'monthly', 10, false),
       ('Synthetic B', 'bill', 'monthly', 16, true),
@@ -165,9 +183,12 @@ test("database bills and money check agree, and today carries only the money sum
     await db.query("update obligations set ended_on = '2040-01-10'");
     const ended = await readMoneyCheck(db, "2040-01-10");
     assert.deepEqual(ended.due_soon, []);
-    assert.deepEqual(ended.overdue, []);
+    assert.deepEqual(
+      ended.overdue.map((entry) => entry.due_on),
+      ["2039-11-11", "2040-01-09"],
+    );
     assert.deepEqual(ended.price_increases, []);
-    assert.equal(ended.stale_unpaid, 0);
+    assert.equal(ended.stale_unpaid, 1);
 
     await db.query(`truncate charges, obligations restart identity cascade;
       insert into obligations (name, kind, cadence, due_day, due_month) values

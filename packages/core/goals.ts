@@ -1,4 +1,4 @@
-import type pg from "pg";
+import pg from "pg";
 import { z } from "zod";
 import { slugSchema } from "./pages.ts";
 
@@ -6,18 +6,24 @@ const text = z.string().trim().min(1);
 const statusSchema = z.enum(["active", "done", "dropped"]);
 const measureSchema = z.object({
   target: z.string().regex(/^-?\d+(\.\d+)?$/),
-  unit: text,
+  unit: text.max(40),
 });
 export const recordGoalSchema = z.object({
   request_id: z.uuid(),
-  area: text.max(80),
-  title: text,
+  area: text.max(80).toLowerCase(),
+  title: text.max(200),
   measure: measureSchema.nullish(),
-  due_on: z.iso.date().nullish(),
+  due_on: z.iso
+    .date()
+    .refine((date) => date >= "1900-01-01" && date <= "2200-12-31")
+    .nullish(),
   page_slug: slugSchema,
 });
 export const setGoalStatusSchema = z.object({
-  id: z.string().regex(/^[1-9]\d*$/),
+  id: z
+    .string()
+    .max(19)
+    .regex(/^[1-9]\d*$/),
   status: statusSchema,
 });
 const goalSchema = recordGoalSchema.extend({
@@ -30,9 +36,12 @@ const columns = `id::text, request_id::text, area, title, status, due_on::text, 
   case when target is null then null else jsonb_build_object('target', target::text, 'unit', unit) end as measure`;
 
 export async function activeGoals(db: pg.ClientBase | pg.Pool) {
-  const { rows } = await db.query(`select ${columns} from goals where status = 'active' order by area, id`);
-  const grouped = new Map<string, z.infer<typeof goalSchema>[]>();
-  for (const goal of z.array(goalSchema).parse(rows)) {
+  const { rows } = await db.query(
+    `select ${columns}, exists (select 1 from pages where pages.slug = goals.page_slug and deleted_at is not null) as page_deleted from goals where status = 'active' order by area, id`,
+  );
+  const activeGoalSchema = goalSchema.extend({ page_deleted: z.boolean() });
+  const grouped = new Map<string, z.infer<typeof activeGoalSchema>[]>();
+  for (const goal of z.array(activeGoalSchema).parse(rows)) {
     const goals = grouped.get(goal.area) ?? [];
     goals.push(goal);
     grouped.set(goal.area, goals);
@@ -42,6 +51,13 @@ export async function activeGoals(db: pg.ClientBase | pg.Pool) {
 
 export async function recordGoal(db: pg.ClientBase | pg.Pool, input: z.input<typeof recordGoalSchema>) {
   const goal = recordGoalSchema.parse(input);
+  const page = await db.query("select deleted_at from pages where slug = $1", [goal.page_slug]);
+  if (page.rows[0]?.deleted_at) {
+    const error = new pg.DatabaseError("Cannot link a goal to a deleted page", 0, "error");
+    error.code = "23514";
+    error.constraint = "page is deleted";
+    throw error;
+  }
   const { rows } = await db.query(
     `insert into goals (request_id, area, title, target, unit, due_on, page_slug)
      values ($1, $2, $3, $4, $5, $6, $7)
@@ -63,6 +79,7 @@ export async function recordGoal(db: pg.ClientBase | pg.Pool, input: z.input<typ
 
 export async function setGoalStatus(db: pg.ClientBase | pg.Pool, input: z.input<typeof setGoalStatusSchema>) {
   const { id, status } = setGoalStatusSchema.parse(input);
+  if (BigInt(id) > 9223372036854775807n) return null;
   const { rows } = await db.query(`update goals set status = $2 where id = $1 returning ${columns}`, [id, status]);
   return rows[0] ? goalSchema.parse(rows[0]) : null;
 }
