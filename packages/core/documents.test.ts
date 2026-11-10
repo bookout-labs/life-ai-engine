@@ -107,6 +107,8 @@ test("documents check tracks essential household papers through idempotent write
       assert.equal(check.guardianship_need_unknown, true);
       assert.equal(check.age_unknown.length, 4);
       assert.equal(check.requirements.length, 8);
+      await db.query("update members set born = '2030-01-01' where id = 3");
+      assert.equal((await documentsCheck(db, { as_of: "2040-01-01" })).guardianship_need_unknown, false);
       await db.query(
         "update members set born = case id when 1 then '2000-01-01'::date when 2 then '2001-01-01'::date when 3 then '2030-01-01'::date else '2031-01-01'::date end",
       );

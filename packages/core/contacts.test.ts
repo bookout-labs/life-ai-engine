@@ -59,6 +59,74 @@ test("contacts round-trip and search by name fragment", {
       phone: ["+1", "(202)", "555", "0100"].join(" "),
       address: "Synthetic address",
     };
+    await t.test("invisible contact text is rejected before saving", async () => {
+      for (const field of ["name", "organisation", "address", "notes"]) {
+        for (const value of [...(field === "name" ? ["\u0085"] : []), "\u200b", " \u200b\u0085\t", "\u0301"]) {
+          await assert.rejects(
+            recordContact(db, { ...input, request_id: randomUUID(), [field]: value }),
+            /must contain a visible character/,
+          );
+        }
+      }
+      const visible = await recordContact(db, {
+        ...input,
+        request_id: randomUUID(),
+        name: "合成",
+        role: "other",
+        links: [],
+        organisation: "123",
+        address: "!",
+        notes: "✓",
+      });
+      assert.equal(visible.contact.name, "合成");
+      assert.equal(visible.contact.notes, "✓");
+    });
+    await t.test("email domains cannot contain empty labels", async () => {
+      for (const domain of ["b..c", "b.c."]) {
+        await assert.rejects(
+          recordContact(db, { ...input, request_id: randomUUID(), email: ["a", domain].join(String.fromCharCode(64)) }),
+          /Email must have a dotted domain with no empty labels/,
+        );
+      }
+    });
+    await t.test("plain words and underscores both search contact roles", async () => {
+      const saved = await recordContact(db, {
+        request_id: randomUUID(),
+        name: "Synthetic supplier",
+        role: "service_provider",
+        links: [],
+      });
+      for (const query of ["service provider", "SERVICE PROVIDER", "service_provider"])
+        assert.deepEqual(await searchContacts(db, { query }), [saved.contact]);
+    });
+    await t.test("empty optional details clear stored values", async () => {
+      const saved = await recordContact(db, {
+        ...input,
+        request_id: randomUUID(),
+        name: "Synthetic clearing",
+        role: "other",
+        links: [],
+        notes: "Synthetic note",
+      });
+      for (const empty of ["", " \t\n", "\u0085", "\u2003"]) {
+        const cleared = await recordContact(db, {
+          ...input,
+          request_id: randomUUID(),
+          id: saved.contact.id,
+          name: "Synthetic clearing",
+          role: "other",
+          links: [],
+          organisation: empty,
+          phone: empty,
+          email: empty,
+          address: empty,
+          notes: empty,
+        });
+        for (const field of ["organisation", "phone", "email", "address", "notes"] as const)
+          assert.equal(cleared.contact[field], null);
+        assert.deepEqual(await searchContacts(db, { query: "Synthetic clearing", role: "other" }), [cleared.contact]);
+      }
+    });
     await t.test("role, organisation, member and activity filters return every link", async () => {
       const result = await recordContact(db, input);
       for (const filter of [
@@ -153,50 +221,87 @@ test("contacts round-trip and search by name fragment", {
         { role: "unknown" },
         { phone: "abc" },
         { email: "malformed" },
-        { address: " " },
         { links: [{ kind: "member", id: "0" }] },
       ])
         await assert.rejects(recordContact(db, { ...input, request_id: randomUUID(), ...patch }));
     });
-    await t.test("MCP preserves the specific missing-member message", async () => {
-      const { registerHooks } = await import("node:module");
-      const { createMcpHandler } = await import("@modelcontextprotocol/server");
-      const hooks = registerHooks({
-        resolve(specifier, context, nextResolve) {
-          if (specifier === "cloudflare:workers")
-            return {
-              url: 'data:text/javascript,export const env = {PUBLIC_ORIGIN: "https://synthetic.test"}; export class WorkerEntrypoint {}',
-              shortCircuit: true,
-            };
-          return nextResolve(specifier, context);
-        },
-      });
-      const { tools } = await import(new URL("../../apps/mcp/worker.ts", import.meta.url).href);
-      hooks.deregister();
-      const url = new URL(process.env.CONTACTS_TEST_DATABASE_URL ?? "");
-      url.searchParams.set("options", `-c search_path=${namespace}`);
-      const handler = createMcpHandler(() => tools({ HYPERDRIVE: { connectionString: url.toString() } } as never));
-      const response = await handler.fetch(
-        new Request("https://synthetic.test/mcp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/call",
-            params: {
-              name: "record_contact",
-              arguments: { ...input, request_id: randomUUID(), links: [{ kind: "member", id: "9223372036854775807" }] },
-            },
-          }),
-        }),
-      );
-      const text = await response.text();
-      const payload = JSON.parse(text.startsWith("{") ? text : (text.match(/^data: (.*)$/m)?.[1] ?? ""));
-      assert.equal(payload.result.isError, true);
-      assert.equal(payload.result.content[0].text, "Member 9223372036854775807 not found.");
-      assert.doesNotMatch(text, /Could not save the record/);
-    });
+    await t.test(
+      "MCP rejects invisible text and malformed email with specific messages and clears empty details",
+      async () => {
+        const { registerHooks } = await import("node:module");
+        const { createMcpHandler } = await import("@modelcontextprotocol/server");
+        const hooks = registerHooks({
+          resolve(specifier, context, nextResolve) {
+            if (specifier === "cloudflare:workers")
+              return {
+                url: 'data:text/javascript,export const env = {PUBLIC_ORIGIN: "https://synthetic.test"}; export class WorkerEntrypoint {}',
+                shortCircuit: true,
+              };
+            return nextResolve(specifier, context);
+          },
+        });
+        const { tools } = await import(new URL("../../apps/mcp/worker.ts", import.meta.url).href);
+        hooks.deregister();
+        const url = new URL(process.env.CONTACTS_TEST_DATABASE_URL ?? "");
+        url.searchParams.set("options", `-c search_path=${namespace}`);
+        const handler = createMcpHandler(() => tools({ HYPERDRIVE: { connectionString: url.toString() } } as never));
+        const call = async (arguments_: unknown) => {
+          const response = await handler.fetch(
+            new Request("https://synthetic.test/mcp", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "tools/call",
+                params: { name: "record_contact", arguments: arguments_ },
+              }),
+            }),
+          );
+          const text = await response.text();
+          assert.doesNotMatch(text, /Could not save the record/);
+          return JSON.parse(text.startsWith("{") ? text : (text.match(/^data: (.*)$/m)?.[1] ?? "")).result;
+        };
+        const missing = await call({
+          ...input,
+          request_id: randomUUID(),
+          links: [{ kind: "member", id: "9223372036854775807" }],
+        });
+        assert.equal(missing.isError, true);
+        assert.equal(missing.content[0].text, "Member 9223372036854775807 not found.");
+        const junk = [
+          ...["name", "organisation", "address", "notes"].flatMap((field) =>
+            [...(field === "name" ? ["\u0085"] : []), "\u200b"].map((value) => ({
+              patch: { [field]: value },
+              message: `${field[0]?.toUpperCase()}${field.slice(1)} must contain a visible character (letter, number, punctuation or symbol).`,
+            })),
+          ),
+          ...["b..c", "b.c."].map((domain) => ({
+            patch: { email: ["a", domain].join(String.fromCharCode(64)) },
+            message: "Email must have a dotted domain with no empty labels.",
+          })),
+        ];
+        for (const { patch, message } of junk) {
+          const result = await call({ ...input, request_id: randomUUID(), links: [], ...patch });
+          assert.equal(result.isError, true);
+          assert.ok(result.content[0].text.includes(message), result.content[0].text);
+        }
+        const cleared = await call({
+          ...input,
+          request_id: randomUUID(),
+          name: "Synthetic MCP clear",
+          links: [],
+          organisation: "",
+          phone: " \t",
+          email: "",
+          address: "\u0085",
+          notes: "",
+        });
+        assert.equal(cleared.isError, undefined);
+        const contact = JSON.parse(cleared.content[0].text).contact;
+        for (const field of ["organisation", "phone", "email", "address", "notes"]) assert.equal(contact[field], null);
+      },
+    );
     const migration = await readFile(
       new URL("../../db/migrations/20261111020000_contacts.sql", import.meta.url),
       "utf8",

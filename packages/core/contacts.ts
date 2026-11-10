@@ -23,29 +23,49 @@ const link = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("member"), id: targetId }),
   z.object({ kind: z.literal("activity"), id: targetId }),
 ]);
+const visibleText = (max: number, field: string) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .regex(
+      /[\p{L}\p{N}\p{P}\p{S}]/u,
+      `${field} must contain a visible character (letter, number, punctuation or symbol).`,
+    );
+const optionalText = (schema: z.ZodString) =>
+  z
+    .union([
+      z
+        .string()
+        .regex(/^[\p{White_Space}\uFEFF]*$/u)
+        .transform(() => null),
+      schema,
+    ])
+    .nullable()
+    .default(null);
 const fields = z.object({
-  name: z.string().trim().min(1).max(300),
+  name: visibleText(300, "Name"),
   role,
-  organisation: z.string().trim().min(1).max(300).nullable().default(null),
-  phone: z
-    .string()
-    .trim()
-    .regex(/^[+0-9() .-]+$/)
-    .refine((s) => {
-      const digits = s.replace(/\D/g, "").length;
-      return digits >= 7 && digits <= 20;
-    }, "Phone must contain 7 to 20 digits and common phone punctuation only.")
-    .nullable()
-    .default(null),
-  email: z
-    .string()
-    .trim()
-    .max(254)
-    .regex(/^[^\s@]+@[^\s@.]+[.][^\s@]+$/)
-    .nullable()
-    .default(null),
-  address: z.string().trim().min(1).max(2000).nullable().default(null),
-  notes: z.string().max(4000).nullable().default(null),
+  organisation: optionalText(visibleText(300, "Organisation")),
+  phone: optionalText(
+    z
+      .string()
+      .trim()
+      .regex(/^[+0-9() .-]+$/)
+      .refine((s) => {
+        const digits = s.replace(/\D/g, "").length;
+        return digits >= 7 && digits <= 20;
+      }, "Phone must contain 7 to 20 digits and common phone punctuation only."),
+  ),
+  email: optionalText(
+    z
+      .string()
+      .trim()
+      .max(254)
+      .regex(/^[^\s@]+@[^\s@.]+(?:[.][^\s@.]+)+$/, "Email must have a dotted domain with no empty labels."),
+  ),
+  address: optionalText(visibleText(2000, "Address")),
+  notes: optionalText(visibleText(4000, "Notes")),
   links: z.array(link).max(100),
 });
 const contactSchema = fields.extend({ id: z.uuid() });
@@ -71,7 +91,7 @@ export async function searchContacts(db: Database, input: z.input<typeof searchC
   const { rows } = await db.query(
     `select ${columns} from contacts c
     where ($1::text is null or strpos(lower(c.name), lower($1)) > 0
-      or strpos(lower(coalesce(c.organisation, '')), lower($1)) > 0 or strpos(c.role, lower($1)) > 0)
+      or strpos(lower(coalesce(c.organisation, '')), lower($1)) > 0 or strpos(replace(c.role, '_', ' '), lower(replace($1, '_', ' '))) > 0)
     and ($2::text is null or c.role = $2)
     and ($3::bigint is null or exists (select 1 from contact_links where contact_id = c.id and member_id = $3))
     and ($4::bigint is null or exists (select 1 from contact_links where contact_id = c.id and activity_id = $4))

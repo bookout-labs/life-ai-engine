@@ -16,6 +16,15 @@ test("recorded charges own monthly and yearly billing cycles", {
     await db.query("set local search_path to public");
     for (const scenario of [
       {
+        name: "two paid April charges claim distinct April and May cycles",
+        from: "2041-04-28",
+        due: 1,
+        prior: "2041-04-01",
+        recorded: "2041-04-16",
+        paid: true,
+        expected: [],
+      },
+      {
         name: "matching two charges takes priority over zero total distance",
         from: "2041-04-01",
         due: 1,
