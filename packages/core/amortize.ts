@@ -30,7 +30,10 @@ const LIMIT = 2_000;
 
 const round = (n: bigint, d: bigint): bigint => (2n * n + d) / (2n * d);
 const min = (a: bigint, b: bigint): bigint => (a < b ? a : b);
-const dollars = (c: bigint): string => `${c / 100n}.${String(c % 100n).padStart(2, "0")}`;
+function dollars(c: bigint): string {
+  const abs = c < 0n ? -c : c;
+  return `${c < 0n ? "-" : ""}${abs / 100n}.${String(abs % 100n).padStart(2, "0")}`;
+}
 const dayCount = (from: string, to: string): number => (Date.parse(to) - Date.parse(from)) / DAY_MS;
 const addDays = (iso: string, n: number): string => new Date(Date.parse(iso) + n * DAY_MS).toISOString().slice(0, 10);
 
@@ -123,17 +126,20 @@ class Account {
 function* payments(loan: Loan, start: Position, strategy: Strategy): Generator<[string, bigint | null]> {
   const first = dueAfter(loan, start.on);
   const lump = strategy.kind === "lump_sum" ? strategy : undefined;
+  const end = maturity(loan);
   let lumpDone = !lump;
   for (let i = 0; ; i++) {
-    const [on, amount] =
+    const [date, amount] =
       strategy.kind === "biweekly"
         ? [addDays(dueDate(loan, first), 14 * i), round(loan.payment, 2n)]
         : [dueDate(loan, first + i), loan.payment + (strategy.kind === "extra" ? strategy.monthly : 0n)];
+    const on = date < end ? date : end;
     if (lump && !lumpDone && lump.on <= on) {
       lumpDone = true;
       yield [lump.on, lump.amount];
     }
-    yield [on, on === maturity(loan) ? null : amount];
+    yield [on, on === end ? null : amount];
+    if (on === end) return;
   }
 }
 
@@ -158,10 +164,10 @@ function scheduledBalance(loan: Loan, date: string): string {
   return paid.at(-1)?.balance ?? dollars(loan.principal);
 }
 
-// Every loan pays its own payment each month; the budget left over, including payments freed by
-// loans already paid off, goes to the target loans in strategy order.
+// The budget is spent one calendar month at a time on the loans due that month. Each pays its own
+// payment; what is left, including payments freed by loans already paid off, goes to them in strategy
+// order. A loan whose first payment is still ahead neither draws on the budget nor adds to it.
 function payDown(accounts: Account[], extra: bigint, order: Order): void {
-  const budget = accounts.reduce((sum, a) => sum + a.loan.payment, extra);
   const rank = (a: Account, b: Account): number => {
     const byRate = Number(b.loan.apr - a.loan.apr);
     const byBalance = Number(a.balance - b.balance);
@@ -169,22 +175,29 @@ function payDown(accounts: Account[], extra: bigint, order: Order): void {
     return first || a.loan.name.localeCompare(b.loan.name);
   };
   const next = new Map(accounts.map((a) => [a, dueAfter(a.loan, a.through)]));
+  const due = (a: Account): string => dueDate(a.loan, next.get(a) ?? 0);
   while (accounts.some((a) => a.open)) {
-    const open = accounts.filter((a) => a.open).sort(rank);
-    for (const a of open) a.accrue(dueDate(a.loan, next.get(a) ?? 0));
-    const amounts = new Map(open.map((a) => [a, min(a.loan.payment, a.payoff())]));
+    const [month = ""] = accounts
+      .filter((a) => a.open)
+      .map((a) => due(a).slice(0, 7))
+      .sort();
+    const paying = accounts.filter((a) => a.open && due(a).startsWith(month)).sort(rank);
+    const budget = accounts
+      .filter((a) => !a.open || paying.includes(a))
+      .reduce((sum, a) => sum + a.loan.payment, extra);
+    for (const a of paying) a.accrue(due(a));
+    const amounts = new Map(paying.map((a) => [a, min(a.loan.payment, a.payoff())]));
     let left = budget - [...amounts.values()].reduce((sum, v) => sum + v, 0n);
-    for (const a of open) {
+    for (const a of paying) {
       const more = a.payoff() - (amounts.get(a) ?? 0n);
       const add = min(more, left);
       amounts.set(a, (amounts.get(a) ?? 0n) + add);
       left -= add;
     }
-    for (const a of open) {
-      const k = next.get(a) ?? 0;
-      const on = dueDate(a.loan, k);
+    for (const a of paying) {
+      const on = due(a);
       a.pay(on, on === maturity(a.loan) ? a.payoff() : (amounts.get(a) ?? 0n));
-      next.set(a, k + 1);
+      next.set(a, (next.get(a) ?? 0) + 1);
     }
   }
 }
@@ -211,8 +224,7 @@ export function explore(
   ];
   let baselineInterest = 0n;
   const loans = positioned.map(({ loan, start }) => {
-    const runs = strategies.map((s) => run(loan, start, s));
-    const baseline = runs[0] ?? run(loan, start, { kind: "baseline" });
+    const baseline = run(loan, start, { kind: "baseline" });
     baselineInterest += baseline.interestPaid;
     return {
       name: loan.name,
@@ -223,7 +235,14 @@ export function explore(
         loan.accrual === "daily"
           ? "Interest accrues daily, so paying earlier or more often saves interest."
           : "Interest is charged once a month, so paying earlier in the month saves nothing; only paying more does.",
-      scenarios: runs.map((a, j) => ({ strategy: strategies[j]?.kind, ...summary(a, baseline) })),
+      scenarios: strategies.map((s) =>
+        s.kind === "lump_sum" && s.on < start.on
+          ? {
+              strategy: s.kind,
+              excluded: `The lump sum on ${s.on} predates the starting balance on ${start.on}, which already reflects it.`,
+            }
+          : { strategy: s.kind, ...summary(run(loan, start, s), baseline) },
+      ),
     };
   });
   const orders =

@@ -61,7 +61,7 @@ test("daily accrual charges interest for the days actually elapsed", () => {
 
 const scenario = (result: ReturnType<typeof explore>, strategy: string) => {
   const found = result.loans[0]?.scenarios.find((s) => s.strategy === strategy);
-  assert.ok(found, `${strategy} scenario present`);
+  assert.ok(found && !("excluded" in found), `${strategy} scenario computed`);
   return found;
 };
 
@@ -166,5 +166,59 @@ test("the explorer tool reads loans, checks statements and lists loans missing t
     mortgage?.scenarios.map((s) => s.strategy),
     ["baseline", "extra", "biweekly"],
   );
-  assert.equal(mortgage?.scenarios[0]?.payments, 235);
+  const baseline = mortgage?.scenarios[0];
+  assert.ok(baseline && "payments" in baseline);
+  assert.equal(baseline.payments, 235);
+});
+
+const cents = (amount: string): number => Math.round(Number(amount) * 100);
+
+// The remaining months of a 60-month loan, starting from the balance its own schedule shows.
+const lateInLoan = (accrual: "daily" | "monthly", left: number) => {
+  const note = loan({ principal: 2_000_000n, apr: 6_000n, termMonths: 60, accrual });
+  const row = schedule(note)[59 - left];
+  assert.ok(row);
+  return explore([{ loan: note, start: { balance: BigInt(cents(row.balance)), on: row.on } }], {});
+};
+
+test("biweekly payments stop at the contractual maturity", () => {
+  for (const accrual of ["daily", "monthly"] as const) {
+    for (const left of [2, 11]) {
+      const biweekly = scenario(lateInLoan(accrual, left), "biweekly");
+      assert.ok(biweekly.payoff_on <= "2031-01-01", `${accrual}, ${left} left: paid off by maturity`);
+    }
+  }
+});
+
+test("a strategy that costs more interest reports its negative savings as a decimal amount", () => {
+  const result = lateInLoan("daily", 2);
+  const baseline = scenario(result, "baseline");
+  const biweekly = scenario(result, "biweekly");
+  assert.ok(cents(biweekly.total_interest) > cents(baseline.total_interest), "biweekly costs more this late");
+  assert.match(biweekly.interest_saved, /^-\d+\.\d{2}$/);
+  assert.equal(cents(biweekly.interest_saved), cents(baseline.total_interest) - cents(biweekly.total_interest));
+});
+
+test("a lump sum dated before the starting balance is excluded, since that balance already reflects it", () => {
+  const note = loan({ principal: 1_000_000n, apr: 7_300n, termMonths: 36 });
+  const result = explore([{ loan: note, start: { balance: 500_000n, on: "2027-06-01" } }], {
+    lumpSum: { on: "2026-03-15", amount: 100_000n },
+  });
+  const lump = result.loans[0]?.scenarios.find((s) => s.strategy === "lump_sum");
+  assert.ok(lump && !("interest_saved" in lump), "no savings reported");
+  assert.match(lump.excluded ?? "", /2026-03-15.*2027-06-01/);
+});
+
+test("a shared budget pays loans on one calendar, so a payment frees up only after its loan is paid off", () => {
+  // Interest-free, so each loan's progress is plain arithmetic: Old has three 100.00 payments left,
+  // through 2026-01-01; New starts in 2026-02 and then gets Old's 100.00 too, 200.00 a month for six months.
+  const old = loan({ name: "Old", principal: 120_000n, apr: 0n, termMonths: 12, firstPaymentOn: "2025-02-01" });
+  const fresh = loan({ name: "New", principal: 120_000n, apr: 0n, termMonths: 12, firstPaymentOn: "2026-02-01" });
+  const { strategies } = explore([{ loan: old, start: { balance: 30_000n, on: "2025-10-01" } }, { loan: fresh }], {});
+  for (const s of strategies) {
+    assert.deepEqual(s.paid_off, [
+      { name: "Old", on: "2026-01-01" },
+      { name: "New", on: "2026-07-01" },
+    ]);
+  }
 });
