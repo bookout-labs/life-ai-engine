@@ -4,6 +4,8 @@ Save from an isolated worktree branch with `node .agents/scripts/save.ts --work 
 
 The local save stages explicit paths, checks the allowlist and personal terms, runs npm run check, commits trailers and pushes. It creates or updates the branch PR through App installation 180008533. Failures leave the branch and PR available for retry.
 
+Run `node .agents/scripts/worktree-sweep.ts` to list merged, clean T3 worktrees idle for 48 hours, ignoring regenerable output but protecting ignored secret files; `--remove` opts into removal after process-safety checks.
+
 ## CI walls
 
 The required gate and secrets checks run on pull_request_target from main. They read PR data without installing or executing PR code. Forks receive no passing gate. The gate scans added lines, commit messages, title and body before review. Unknown paths fail. Personal terms are regular expressions supplied through PERSONAL_TERMS or ~/.config/life-ai/personal-terms. Missing, empty or invalid configuration refuses. Output contains counts only.

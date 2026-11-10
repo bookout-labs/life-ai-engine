@@ -1,9 +1,8 @@
 // Saves finished work from a T3 worktree: commit, push, PR as the App, auto-merge. GitHub's gate (main's copy) judges it.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { added, leaks, missing, requireOpenIssue } from "./proof.ts";
 import { waitForMerge } from "./save-wait.ts";
@@ -20,20 +19,17 @@ const { values, positionals } = parseArgs({
     "no-wait": { type: "boolean", default: false },
   },
 });
-
 function fail(why: string): never {
   console.error(`save: ${why}`);
   process.exit(1);
 }
 const git = (...args: string[]): string =>
   execFileSync("git", args, { encoding: "utf8", stdio: "pipe", maxBuffer: 1 << 28 }).trim();
-
 const APP = { id: "5673796", installation: "180008533", key: join(homedir(), ".config", "life-ai", "app.pem") };
 const tokenArgs = ["token", "generate", "--app-id", APP.id, "--installation-id", APP.installation, "--key", APP.key];
 const token: string = execFileSync("gh", [...tokenArgs, "--token-only"], { encoding: "utf8", stdio: "pipe" }).trim();
 const gh = (...args: string[]): string =>
   execFileSync("gh", args, { encoding: "utf8", stdio: "pipe", env: { ...process.env, GH_TOKEN: token } }).trim();
-
 // After three blocked rounds the agent regroups itself: the App posts it, and the gate counts the App's Regroup.
 if (values.regroup) {
   if (!values.issue || !/^[1-9]\d*$/.test(values.issue)) fail("--regroup needs --issue <n>");
@@ -43,7 +39,6 @@ if (values.regroup) {
   console.log(`Regrouped #${values.issue}`);
   if (positionals.length === 0) process.exit(0);
 }
-
 const work: string = values.work ?? "";
 const message: string = values.message ?? "";
 const proof: string = values.proof ?? "";
@@ -52,10 +47,21 @@ if (!message) fail('Give a message, like -m "what changed"');
 if (positionals.length === 0) fail("Name the files to save. Nothing is saved by default.");
 if (values.issue && !/^[1-9]\d*$/.test(values.issue)) fail("--issue is a Builds board issue number, like --issue 2");
 if (/[\r\n]/.test(proof)) fail("--proof must be one line");
-
 const branch: string = git("branch", "--show-current");
 if (!branch || branch === "main") fail("Save from a T3 worktree thread, never from main.");
-
+if (spawnSync("git", ["fetch", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*"]).status !== 0)
+  fail("git fetch failed. Check origin access, then save again.");
+const remote = `origin/${branch}`;
+const refs = ["origin/main"];
+const exists = spawnSync("git", ["show-ref", "--verify", "--quiet", `refs/remotes/${remote}`]).status;
+if (exists === 0) refs.push(remote);
+else if (exists !== 1) fail("Cannot establish remote branch status.");
+for (const ref of refs) {
+  const status = spawnSync("git", ["merge-base", "--is-ancestor", ref, "HEAD"]).status;
+  if (status === 1)
+    fail(`Branch is stale. Run git merge --autostash ${ref}. Resolve conflicts and run git merge --continue.`);
+  if (status !== 0) fail("git merge-base failed. Cannot establish branch freshness.");
+}
 function canonical(path: string): string {
   try {
     return realpathSync(path);
@@ -66,7 +72,6 @@ function canonical(path: string): string {
     return join(canonical(dirname(path)), basename(path));
   }
 }
-
 const root = realpathSync(git("rev-parse", "--show-toplevel"));
 function within(base: string, path: string): string | undefined {
   const rel = relative(base, path);
@@ -96,7 +101,6 @@ if (files.length === 0) {
   console.log("Nothing to save in those files.");
   process.exit(0);
 }
-
 const agent: string =
   values.agent ?? (process.env.CLAUDECODE ? "claude-code" : process.env.CODEX_THREAD_ID ? "codex" : "user");
 const session: string = process.env.CLAUDE_CODE_SESSION_ID ?? process.env.CODEX_THREAD_ID ?? "terminal";
@@ -104,18 +108,12 @@ const trailers: string = `Work: ${work}\nAgent: ${agent}\nSession: ${session}`;
 const body: string = [proof && `Proof: ${proof}`, values.issue && `Board: #${values.issue}`, trailers]
   .filter(Boolean)
   .join("\n");
-
 const errors = missing(files, body);
 if (errors.length) fail(errors.join("\n"));
-try {
-  if (values.issue) requireOpenIssue(values.issue);
-} catch (err: unknown) {
-  fail(err instanceof Error ? err.message : String(err));
-}
-
 // The repo is public, so a pushed branch is already published: personal terms are refused before the push.
 let hits: number;
 try {
+  if (values.issue) requireOpenIssue(values.issue);
   hits = leaks([
     files.join("\n"),
     added(git("diff", "--text", "-U0", "origin/main...HEAD")),
@@ -128,62 +126,39 @@ try {
   fail(err instanceof Error ? err.message : "Personal scan failed.");
 }
 if (hits) fail(`${hits} line(s) match the personal-term list. Personal data lives in Neon and R2, never in git.`);
-
 // Feedback, not the gate: CI's required check is the wall. Skipping it here only moves the failure to GitHub.
 try {
   execFileSync("npm", ["run", "--silent", "check"], { stdio: "pipe" });
 } catch (err) {
   const output = err as { stderr?: Buffer; stdout?: Buffer };
-  fail(
-    `npm run check failed. Fix it, then save again.\n${String(output.stdout ?? "")
+  const tail = (part?: Buffer) =>
+    String(part ?? "")
       .split("\n")
       .slice(-8)
-      .join("\n")}\n${String(output.stderr ?? "")
-      .split("\n")
-      .slice(-8)
-      .join("\n")}`,
-  );
+      .join("\n");
+  fail(`npm run check failed. Fix it, then save again.\n${tail(output.stdout)}\n${tail(output.stderr)}`);
 }
 
 git("commit", "-m", `${message}\n\n${trailers}`);
-git("push", "-u", "origin", branch);
+try {
+  git("push", "-u", "origin", branch);
+} catch {
+  fail(
+    `Push failed. Fetch origin, run git merge --autostash ${remote}, resolve conflicts and run git merge --continue if needed, then save again.`,
+  );
+}
 console.log(`1/3 pushed ${branch}`);
 
 // A failed save leaves its PR open with auto-merge on; the next save from this branch refreshes it instead of opening another.
-let pr: string = gh(
-  "pr",
-  "list",
-  "-R",
-  "bookout-labs/life-ai-engine",
-  "--head",
-  branch,
-  "--state",
-  "open",
-  "--json",
-  "url",
-  "--jq",
-  ".[0].url // empty",
-);
+const repoArgs = ["-R", "bookout-labs/life-ai-engine"];
+const lookup = ["--state", "open", "--json", "url", "--jq", ".[0].url // empty"];
+let pr = gh("pr", "list", ...repoArgs, "--head", branch, ...lookup);
 if (pr) {
   gh("pr", "edit", pr, "--title", message, "--body", body);
   // Auto-merge stays bound to the commit it was first armed on, so a refreshed PR never queues; re-arm it.
   if (gh("pr", "view", pr, "--json", "autoMergeRequest", "--jq", ".autoMergeRequest != null") === "true")
     gh("pr", "merge", pr, "--disable-auto");
-} else
-  pr = gh(
-    "pr",
-    "create",
-    "-R",
-    "bookout-labs/life-ai-engine",
-    "--base",
-    "main",
-    "--head",
-    branch,
-    "--title",
-    message,
-    "--body",
-    body,
-  );
+} else pr = gh("pr", "create", ...repoArgs, "--base", "main", "--head", branch, "--title", message, "--body", body);
 gh("pr", "merge", pr, "--auto", "--merge", "--match-head-commit", git("rev-parse", "HEAD"));
 console.log(`2/3 ${pr} merges when check, gate and secrets pass. Link it to this thread (link_pull_request).`);
 if (values["no-wait"]) {
@@ -197,23 +172,23 @@ try {
   fail(err instanceof Error ? err.message : String(err));
 }
 // The queue merges with a merge commit, so this branch is its ancestor and fast-forwards onto the new main.
-git("pull", "--ff-only", "origin", "main");
-console.log(`3/3 merged ${pr}`);
-
-const merged: string = git("rev-parse", "HEAD");
-const fields = ["--json", "databaseId,url", "--jq", '.[0] | select(.) | "\\(.databaseId) \\(.url)"'];
-for (let i = 0; i < 24; i++) {
-  const run = gh("run", "list", "--workflow", "ship.yml", "--commit", merged, ...fields);
-  if (run) {
-    const [id = "", url = ""] = run.split(" ");
-    try {
-      gh("run", "watch", id, "--exit-status", "--interval", "5");
-    } catch {
-      fail(`merged, but the production check failed: ${url}. Fix it and save again.`);
-    }
-    console.log(`Production check passed: ${url}. ship.yml posts the evidence on the board issue.`);
-    process.exit(0);
-  }
-  await sleep(5000);
+try {
+  git("pull", "--ff-only", "origin", "main");
+} catch {
+  fail(
+    `PR ${pr} is merged; local update was skipped. Run git pull --ff-only origin main after resolving local changes.`,
+  );
 }
-fail("merged, but GitHub never started the production check (ship.yml).");
+console.log(`3/3 merged ${pr}`);
+console.log("Merged is not done until ship.yml passes. ship.yml posts evidence on the board issue only on success.");
+const sha = git("rev-parse", "HEAD");
+const ship = spawnSync(
+  "gh",
+  ["run", "list", "--workflow", "ship.yml", "--commit", sha, "--json", "url", "--jq", ".[0].url // empty"],
+  { encoding: "utf8", timeout: 3000, env: { ...process.env, GH_TOKEN: token } },
+);
+console.log(
+  ship.status === 0 && ship.stdout.trim()
+    ? ship.stdout.trim()
+    : `Find ship: gh run list --workflow ship.yml --commit ${sha}; then gh run watch <run-id>`,
+);
