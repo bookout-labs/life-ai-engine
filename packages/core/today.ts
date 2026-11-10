@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { z } from "zod";
 import { billsDue, deadlinesDue } from "./bills.ts";
+import { moneyCheckSchema, readMoneyCheck } from "./money-check.ts";
 import { pageList, slugSchema } from "./pages.ts";
 import { schedule } from "./schedule.ts";
 
@@ -24,6 +25,7 @@ const fixtureSchema = z.object({
   ),
   deadlines: z.array(z.object({ due_on: z.string(), item: z.string(), action: z.string(), overdue: z.boolean() })),
   pages: z.array(pageSchema),
+  money_check: moneyCheckSchema.optional(),
 });
 const windows = { events: 7, bills: 7, deadlines: 14 };
 
@@ -44,6 +46,7 @@ export function buildToday(input: unknown) {
     members: data.members,
     events: data.events,
     bills: data.bills,
+    ...(data.money_check ? { money_check: data.money_check } : {}),
     deadlines: data.deadlines,
     context: pages.filter((p) => ["person", "area", "project"].includes(p.type)),
     previousDaily: daily.filter((p) => p.slug < dailySlug).at(-1) ?? null,
@@ -64,6 +67,7 @@ export async function readToday(db: pg.ClientBase, now = new Date().toISOString(
       members: members.rows,
       events: await schedule(db, date, windows.events),
       bills: await billsDue(db, date, windows.bills),
+      money_check: await readMoneyCheck(db, date),
       deadlines: await deadlinesDue(db, date, windows.deadlines),
       pages: await pageList(db),
     });
