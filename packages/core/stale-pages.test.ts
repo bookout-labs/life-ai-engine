@@ -19,7 +19,7 @@ test("age limit is crossed after the boundary day", () => {
 
 test("dated statements and broken links identify their evidence", () => {
   const rows = [
-    row("p", "project", "# Current state (2039-12-01)\n[[gone]] `missing/path` [[present]]", "2040-02-01"),
+    row("p", "project", "# Current state (2039-12-01)\n[[gone]] `areas/missing.md` [[present]]", "2040-02-01"),
     row("present", "project", "", "2040-02-01"),
     row("gone", "project", "", "2040-02-01", true),
   ];
@@ -29,10 +29,17 @@ test("dated statements and broken links identify their evidence", () => {
       reasons: [
         { kind: "dated_statement", date: "2039-12-01", line: "# Current state (2039-12-01)", limit_days: 30 },
         { kind: "broken_link", target: "gone" },
-        { kind: "broken_link", target: "missing/path" },
+        { kind: "broken_link", target: "areas/missing" },
       ],
     },
   ]);
+});
+
+test("history dates, inline code and links by slug ending do not trigger", () => {
+  const body =
+    "| 2039-01-05 | logged |\nDecided 2039-01-05.\nRun `npm` on `main` or `foo/bar`.\n[[jo]] [[people/jo]] `people/jo.md`";
+  const rows = [row("p", "project", body, "2040-02-01"), row("people/jo", "person", "", "2040-02-01")];
+  assert.deepEqual(classifyStalePages(rows, "2040-02-01"), []);
 });
 
 test("recent and invalid dates, frontmatter, and log pages do not trigger", () => {

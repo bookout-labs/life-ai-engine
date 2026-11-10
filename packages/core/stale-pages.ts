@@ -18,7 +18,9 @@ const day = 86_400_000;
 
 export function classifyStalePages(rows: StalePageRow[], asOf: string): StalePage[] {
   const now = Date.parse(`${asOf}T00:00:00Z`);
-  const targets = new Set(rows.filter((row) => !row.deleted_at).map((row) => row.slug));
+  const live = rows.filter((row) => !row.deleted_at).map((row) => row.slug);
+  // Wiki links name a page by its slug or by the slug's last segment, as in [[people/x]] or [[x]].
+  const targets = new Set([...live, ...live.map((slug) => slug.slice(slug.lastIndexOf("/") + 1))]);
   return rows.flatMap((row) => {
     if (row.deleted_at || row.type === "daily" || row.type === "weekly" || row.slug.startsWith("handoff/")) return [];
     const limit = limits.get(row.type) ?? 90;
@@ -27,7 +29,8 @@ export function classifyStalePages(rows: StalePageRow[], asOf: string): StalePag
     if (now - Date.parse(`${updated}T00:00:00Z`) > limit * day)
       reasons.push({ kind: "age", updated_on: updated, limit_days: limit });
     const body = row.body.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
-    for (const line of body.split(/\r?\n/)) {
+    // Only a dated heading claims current state; dates in tables and logs are history.
+    for (const line of body.split(/\r?\n/).filter((text) => text.startsWith("#"))) {
       for (const match of line.matchAll(/\b\d{4}-\d{2}-\d{2}\b/g)) {
         const date = match[0];
         const parsed = Date.parse(`${date}T00:00:00Z`);
@@ -41,7 +44,7 @@ export function classifyStalePages(rows: StalePageRow[], asOf: string): StalePag
     }
     const missing = new Set<string>();
     for (const match of body.matchAll(
-      /\[\[([a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)\]\]|`([a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)`/g,
+      /\[\[([a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)\]\]|`((?:areas|projects|people|inbox)\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)(?:\.md)?`/g,
     )) {
       const target = match[1] ?? match[2];
       if (target && !targets.has(target)) missing.add(target);

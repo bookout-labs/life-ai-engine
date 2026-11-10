@@ -1,4 +1,3 @@
-import { stalePages } from "../../packages/core/stale-pages.ts";
 // life-ai's MCP server: any MCP client signs in with GitHub (the user only), then calls tools that read Neon through Hyperdrive.
 
 import { env } from "cloudflare:workers";
@@ -29,6 +28,7 @@ import { readMoneyCheck } from "../../packages/core/money-check.ts";
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
 import { recordInvestmentBuy, recordInvestmentBuySchema } from "../../packages/core/record-investment-buy.ts";
 import { schedule, today } from "../../packages/core/schedule.ts";
+import { stalePages } from "../../packages/core/stale-pages.ts";
 import { trainingTrend, trainingTrendSchema } from "../../packages/core/training-trend.ts";
 import { publicOrigin } from "./origin.ts";
 
