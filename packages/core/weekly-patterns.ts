@@ -52,7 +52,12 @@ const occurrence = z.object({
   event_id: id.nullable(),
 });
 const patternResult = z.object({ pattern });
-const weekResult = z.object({ created: z.number().int(), skipped: z.number().int() });
+const weekResult = z.object({
+  week_start: date,
+  created: z.number().int(),
+  adopted: z.number().int(),
+  skipped: z.number().int(),
+});
 const patternColumns = `id::text, activity_id::text, weekday, to_char(local_start, 'HH24:MI') as local_start,
   duration_minutes, kind, location, active_from::text, active_until::text`;
 
@@ -60,7 +65,8 @@ async function write(
   db: Database,
   requestId: string,
   operation: "pattern" | "week",
-  use: (client: Database) => Promise<unknown>,
+  use: (client: Database) => Promise<object>,
+  requestKey?: string,
 ) {
   const pooled = db instanceof pg.Pool ? await db.connect() : undefined;
   const client = pooled ?? db;
@@ -74,6 +80,8 @@ async function write(
     if (prior.rows.length) {
       if (prior.rows[0].operation !== operation)
         throw new InputError("Request ID already used for a different operation.");
+      if (requestKey !== undefined && prior.rows[0].result.request_key !== requestKey)
+        throw new InputError("Request ID already used for different weekly session input.");
       await client.query("commit");
       return { result: prior.rows[0].result, already_existed: true };
     }
@@ -81,7 +89,7 @@ async function write(
     await client.query("insert into weekly_requests (request_id, operation, result) values ($1, $2, $3)", [
       requestId,
       operation,
-      result,
+      requestKey === undefined ? result : { ...result, request_key: requestKey },
     ]);
     await client.query("commit");
     return { result, already_existed: false };
@@ -127,6 +135,14 @@ export async function recordWeeklyPattern(db: Database, input: unknown) {
       (season.season_end !== null && command.active_until > season.season_end)
     )
       throw new InputError("Pattern dates must be within the activity season.");
+    const overlap = await client.query(
+      `select id::text from weekly_patterns
+       where activity_id = $1 and weekday = $2 and local_start = $3::time
+         and active_from <= $5::date and active_until >= $4::date
+       order by weekly_patterns.id limit 1`,
+      [command.activity_id, command.weekday, command.local_start, command.active_from, command.active_until],
+    );
+    if (overlap.rows.length) throw new InputError(`Pattern overlaps existing pattern ${overlap.rows[0].id}.`);
     const inserted = await client.query(
       `insert into weekly_patterns (activity_id, weekday, local_start, duration_minutes, kind, location, active_from, active_until)
       values ($1,$2,$3,$4,$5,$6,$7,$8) returning ${patternColumns}`,
@@ -161,8 +177,9 @@ export async function previewWeeklySessions(db: Database, input: unknown) {
   ) select s.id::text as pattern_id, s.activity_id::text, s.local_date::text,
     to_char(s.starts_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as starts_at,
     to_char((s.starts_at + make_interval(mins => s.duration_minutes)) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as ends_at,
-    s.kind, s.location, coalesce(o.status, 'pending') as status, o.event_id::text
+    s.kind, s.location, coalesce(o.status, case when e.cancelled then 'skipped' when e.id is not null then 'created' else 'pending' end) as status, coalesce(o.event_id, e.id)::text as event_id
     from sessions s left join weekly_occurrences o on o.pattern_id = s.id and o.local_date = s.local_date
+    left join events e on e.activity_id = s.activity_id and e.starts_at = s.starts_at
     order by s.local_date, s.id`,
     [value.week_start],
   );
@@ -172,46 +189,70 @@ export async function previewWeeklySessions(db: Database, input: unknown) {
 export async function addWeeklySessions(db: Database, input: unknown) {
   const value = addWeeklySessionsSchema.parse(input);
   monday(value.week_start);
-  const saved = await write(db, value.request_id, "week", async (client) => {
-    const sessions = await previewWeeklySessions(client, value);
-    for (const skip of value.skipped) {
-      if (!(await client.query("select id from weekly_patterns where id = $1", [skip.pattern_id])).rows.length)
-        throw new InputError(`Pattern ${skip.pattern_id} not found.`);
-      if (!sessions.some((s) => s.pattern_id === skip.pattern_id && s.local_date === skip.local_date))
-        throw new InputError(
-          "Skipped date must be an occurrence in this week within the pattern window and activity season.",
-        );
-    }
-    let created = 0;
-    let skipped = 0;
-    for (const session of sessions) {
-      if (value.skipped.some((s) => s.pattern_id === session.pattern_id && s.local_date === session.local_date)) {
-        await client.query(
-          `insert into weekly_occurrences (pattern_id, local_date, status) values ($1,$2,'skipped')
-          on conflict (pattern_id, local_date) do update set status = 'skipped'`,
-          [session.pattern_id, session.local_date],
-        );
-        if (session.event_id)
-          await client.query("update events set cancelled = true where id = $1", [session.event_id]);
-        skipped++;
-      } else if (session.status === "pending") {
-        const event = await client.query(
-          `insert into events (activity_id, kind, starts_at, ends_at, location)
-          values ($1,$2,$3,$4,$5) on conflict (activity_id, starts_at) do nothing returning id::text`,
-          [session.activity_id, session.kind, session.starts_at, session.ends_at, session.location],
-        );
-        if (!event.rows.length)
+  const requestKey = JSON.stringify([
+    value.week_start,
+    [...new Set(value.skipped.map((s) => `${s.pattern_id}/${s.local_date}`))].sort(),
+  ]);
+  const saved = await write(
+    db,
+    value.request_id,
+    "week",
+    async (client) => {
+      const sessions = await previewWeeklySessions(client, value);
+      for (const skip of value.skipped) {
+        if (!(await client.query("select id from weekly_patterns where id = $1", [skip.pattern_id])).rows.length)
+          throw new InputError(`Pattern ${skip.pattern_id} not found.`);
+        if (!sessions.some((s) => s.pattern_id === skip.pattern_id && s.local_date === skip.local_date))
           throw new InputError(
-            `An event already occupies pattern ${session.pattern_id} on ${session.local_date}. Resolve the conflict before adding sessions.`,
+            "Skipped date must be an occurrence in this week within the pattern window and activity season.",
           );
-        await client.query(
-          "insert into weekly_occurrences (pattern_id, local_date, event_id, status) values ($1,$2,$3,'created')",
-          [session.pattern_id, session.local_date, event.rows[0].id],
-        );
-        created++;
       }
-    }
-    return { created, skipped };
-  });
+      let created = 0;
+      let adopted = 0;
+      let skipped = 0;
+      for (const session of sessions) {
+        if (value.skipped.some((s) => s.pattern_id === session.pattern_id && s.local_date === session.local_date)) {
+          await client.query(
+            `insert into weekly_occurrences (pattern_id, local_date, event_id, status) values ($1,$2,$3,'skipped')
+          on conflict (pattern_id, local_date) do update set status = 'skipped'`,
+            [session.pattern_id, session.local_date, session.event_id],
+          );
+          if (session.event_id)
+            await client.query("update events set cancelled = true where id = $1", [session.event_id]);
+          skipped++;
+        } else if (
+          !(
+            await client.query("select 1 from weekly_occurrences where pattern_id = $1 and local_date = $2", [
+              session.pattern_id,
+              session.local_date,
+            ])
+          ).rows.length
+        ) {
+          const event = await client.query(
+            `insert into events (activity_id, kind, starts_at, ends_at, location)
+          values ($1,$2,$3,$4,$5) on conflict (activity_id, starts_at) do nothing returning id::text, cancelled`,
+            [session.activity_id, session.kind, session.starts_at, session.ends_at, session.location],
+          );
+          const inserted = event.rows.length > 0;
+          const existing = inserted
+            ? event
+            : await client.query(
+                "select id::text, cancelled from events where activity_id = $1 and starts_at = $2 for update",
+                [session.activity_id, session.starts_at],
+              );
+          const savedEvent = z.object({ id, cancelled: z.boolean() }).parse(existing.rows[0]);
+          await client.query(
+            "insert into weekly_occurrences (pattern_id, local_date, event_id, status) values ($1,$2,$3,$4)",
+            [session.pattern_id, session.local_date, savedEvent.id, savedEvent.cancelled ? "skipped" : "created"],
+          );
+          if (savedEvent.cancelled) skipped++;
+          else if (inserted) created++;
+          else adopted++;
+        }
+      }
+      return { week_start: value.week_start, created, adopted, skipped };
+    },
+    requestKey,
+  );
   return { ...weekResult.parse(saved.result), already_existed: saved.already_existed };
 }
