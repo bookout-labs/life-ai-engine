@@ -10,20 +10,3 @@ if (!process.env.DATABASE_URL) process.loadEnvFile(fileURLToPath(new URL("../../
 // pg v9 weakens sslmode=require; verify-full keeps today's certificate check.
 const url = parseEnv(config).postgres.databaseUrl.replace("sslmode=require", "sslmode=verify-full");
 export const db = new pg.Pool({ connectionString: url });
-
-// `node .agents/scripts/db.ts` proves a write and a read, then rolls back so nothing is left behind.
-if (import.meta.main) {
-  const client = await db.connect();
-  try {
-    const { rows } = await client.query("select current_database() as db, version() as version");
-    console.log(rows[0]);
-    await client.query("begin");
-    await client.query("create temp table smoke (note text)");
-    await client.query("insert into smoke values ($1)", ["hello from life-ai"]);
-    console.log((await client.query("select note from smoke")).rows);
-    await client.query("rollback");
-  } finally {
-    client.release();
-    await db.end();
-  }
-}
