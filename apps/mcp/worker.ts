@@ -15,7 +15,13 @@ import * as z from "zod";
 import { payoffExplorer, payoffInputSchema } from "../../packages/core/amortize.ts";
 import { billsDue, deadlinesDue } from "../../packages/core/bills.ts";
 import { accounts, budgetTargets } from "../../packages/core/finances.ts";
-import { activeGoals, recordGoal, recordGoalSchema } from "../../packages/core/goals.ts";
+import {
+  activeGoals,
+  recordGoal,
+  recordGoalSchema,
+  setGoalStatus,
+  setGoalStatusSchema,
+} from "../../packages/core/goals.ts";
 import { investmentBuys } from "../../packages/core/investment-buys.ts";
 import { logWorkout, logWorkoutSchema } from "../../packages/core/log-workout.ts";
 import { readMoneyCheck } from "../../packages/core/money-check.ts";
@@ -173,6 +179,16 @@ function tools(env: Env): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async (input) => writeResult(env, (db) => recordGoal(db, input)),
+  );
+  server.registerTool(
+    "set_goal_status",
+    {
+      description:
+        "Mark a goal done or dropped, or back to active, by id from the goals tool. A missing id returns null.",
+      inputSchema: setGoalStatusSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => writeResult(env, (db) => setGoalStatus(db, input)),
   );
   server.registerTool(
     "page_read",
