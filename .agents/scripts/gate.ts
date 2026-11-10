@@ -80,9 +80,8 @@ try {
   }
   const exposed = logins.some((login) => login.length >= 20 && text.includes(login));
   const safeText = leaks([text]) || exposed ? "Review details withheld by personal or credential scan." : text;
-  const blockers = blocking(review);
-  if (blockers.length) {
-    const list = blockers.map((f) => `- [P${f.priority}] Finding withheld`).join("\n");
+  // Blocked or passed, the review is published through the same scan, so the builder sees what to fix.
+  if (blocking(review).length) {
     gh(
       "issue",
       "comment",
@@ -90,7 +89,7 @@ try {
       "-R",
       repo,
       "-b",
-      `Review blocked (round ${rounds + 1}/${MAX_ROUNDS}, ${reviewer}) at ${head}\n\n${list}`,
+      `Review blocked (round ${rounds + 1}/${MAX_ROUNDS}, ${reviewer}) at ${head}\n\n${safeText}`,
     );
     throw new Error(`Review blocked (${reviewer}): fix the P0/P1 findings, then save again.`);
   }

@@ -84,6 +84,7 @@ test("a Codex blocker posts a blocked round", (t) => {
   const { result, calls } = fixture(t, { BLOCK: "1" });
   assert.equal(result.status, 1);
   assert.match(calls, /Review blocked \(round 1\/3, codex\)/);
+  assert.match(calls, /\[P0\] bug — a.ts:1/);
 });
 test("Codex-built changes use Claude structured review", (t) => {
   const { result } = fixture(t, { BODY: "Board: #96\nProof: synthetic smoke\nAgent: codex" });
