@@ -3,7 +3,32 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import pg from "pg";
-import { readGifts, writeGift, writeGiftSchema } from "./gifts.ts";
+import { ZodError } from "zod";
+import { readGifts, recordGiftInputSchema, writeGift, writeGiftSchema } from "./gifts.ts";
+
+test("flat gift input preserves all five commands and their required fields", () => {
+  const base = { request_id: randomUUID(), occasion_id: "fixture" };
+  const gift = { ...base, recipient_id: "1", idea: "Fixture", amount: "0.00", status: "idea" };
+  const commands = [
+    { ...base, action: "occasion", title: "Fixture", budget: null },
+    { ...base, action: "recipient", member_id: "1", budget: null },
+    { ...gift, action: "add_gift" },
+    { ...gift, action: "update_gift", gift_id: randomUUID() },
+    { request_id: randomUUID(), action: "status", gift_id: randomUUID(), status: "bought" },
+  ];
+  for (const command of commands) {
+    assert.deepEqual(writeGiftSchema.parse(recordGiftInputSchema.parse(command)), writeGiftSchema.parse(command));
+    for (const key of Object.keys(command)) {
+      const incomplete = { ...command, [key]: undefined };
+      assert.throws(() => writeGiftSchema.parse(incomplete), ZodError, `${command.action} requires ${key}`);
+      assert.throws(
+        () => writeGiftSchema.parse(recordGiftInputSchema.parse(incomplete)),
+        ZodError,
+        `flat input still requires ${command.action}.${key}`,
+      );
+    }
+  }
+});
 
 test("gift commands reject incomplete recipients, invalid money and unknown statuses", () => {
   const input = {

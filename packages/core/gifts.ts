@@ -47,6 +47,22 @@ export const writeGiftSchema = z.discriminatedUnion("action", [
   z.object({ ...command, ...gift, action: z.literal("update_gift"), gift_id: z.uuid() }),
   z.object({ ...command, action: z.literal("status"), gift_id: z.uuid(), status }),
 ]);
+export const recordGiftInputSchema = z.object({
+  request_id: command.request_id.describe("Generate once per command and reuse on retries."),
+  action: z.enum(["occasion", "recipient", "add_gift", "update_gift", "status"]).describe("Command to perform."),
+  occasion_id: giftsInputSchema.shape.occasion_id.optional().describe("Required except for status."),
+  title: z.string().trim().min(1).max(200).optional().describe("Occasion title; required for occasion."),
+  budget: money.nullable().optional().describe("USD budget or null; required for occasion and recipient."),
+  member_id: memberId.optional().describe("Existing member ID; required for recipient."),
+  recipient_id: gift.recipient_id.optional().describe("Recipient member ID; required for add_gift and update_gift."),
+  idea: gift.idea.optional().describe("Gift description; required for add_gift and update_gift."),
+  amount: gift.amount.optional().describe("USD decimal string; required for add_gift and update_gift."),
+  status: status.optional().describe("Required for add_gift, update_gift and status."),
+  buyer_id: gift.buyer_id.describe("Household buyer member ID; omitted or null clears it on replacement."),
+  link: gift.link.describe("HTTP or HTTPS gift URL; omitted or null clears it on replacement."),
+  note: gift.note.describe("Gift note; omitted or null clears it on replacement."),
+  gift_id: z.uuid().optional().describe("Existing gift UUID; required for update_gift and status."),
+});
 const resultSchema = z.object({ id: z.string() });
 type Database = pg.ClientBase | pg.Pool;
 

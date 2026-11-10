@@ -15,7 +15,13 @@ import * as z from "zod";
 import { payoffExplorer, payoffInputSchema } from "../../packages/core/amortize.ts";
 import { billsDue, deadlinesDue } from "../../packages/core/bills.ts";
 import { accounts, budgetTargets } from "../../packages/core/finances.ts";
-import { giftsInputSchema, readGifts, writeGift, writeGiftSchema } from "../../packages/core/gifts.ts";
+import {
+  giftsInputSchema,
+  readGifts,
+  recordGiftInputSchema,
+  writeGift,
+  writeGiftSchema,
+} from "../../packages/core/gifts.ts";
 import {
   activeGoals,
   recordGoal,
@@ -56,7 +62,7 @@ async function withDb<T>(env: Env, use: (client: pg.Client) => Promise<T>): Prom
   }
 }
 
-function tools(env: Env): McpServer {
+export function tools(env: Env): McpServer {
   const server = new McpServer({ name: "life-ai", version: "1.0.0" });
   server.registerTool(
     "schedule",
@@ -297,10 +303,13 @@ function tools(env: Env): McpServer {
     {
       description:
         "Set up an occasion or recipient budget, add or replace a gift, or change its status. Use existing member IDs for recipients and household buyers; add a missing outside person to members first. Occasion IDs identify one occurrence. Amounts are USD decimal strings. Gift replacement supplies every field; omitted buyer/link/note clear them. Generate one request_id per command and reuse it on retries; retries return the original result without applying changes again.",
-      inputSchema: writeGiftSchema,
+      inputSchema: recordGiftInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
-    async (input) => writeResult(env, (db) => writeGift(db, input)),
+    async (input) => {
+      const value = writeGiftSchema.parse(input);
+      return writeResult(env, (db) => writeGift(db, value));
+    },
   );
   return server;
 }
