@@ -123,7 +123,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "orchestrator-rotation",
-    rule: "Only first-prompt opted-in orchestrators receive rotation instructions. Save private handoffs through pages.ts, recover active jobs without restarting them, and launch successors only with current user/session authority. Leave pins and retiring threads unchanged.",
+    rule: "Only first-prompt opted-in orchestrators receive rotation instructions. Save private handoffs through pages.ts, recover active jobs without restarting them, and always launch the successor, pin it and unpin the retiring thread. Never archive the retiring thread.",
     trigger: "coordinator stop",
     route: {
       kind: "hook",

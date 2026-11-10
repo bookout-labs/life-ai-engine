@@ -110,12 +110,124 @@ test("recorded charges own monthly and yearly billing cycles", {
         expected: [["Fri Mar 01", "80.00"]],
       },
       {
-        name: "ended obligations have no bills",
+        name: "ended obligations retain unpaid recorded bills",
         from: "2041-01-12",
         due: 12,
         recorded: "2041-01-13",
         ended: true,
+        expected: [["Sun Jan 13", "80.00"]],
+      },
+      {
+        name: "paid February charge in March does not consume March month end",
+        from: "2041-03-28",
+        due: 31,
+        recorded: "2041-03-01",
+        paid: true,
+        prior: "2041-01-31",
+        expected: [["Sun Mar 31", "80.00"]],
+      },
+      {
+        name: "January charge on December 31 appears once on its own date",
+        from: "2040-12-29",
+        due: 1,
+        recorded: "2040-12-31",
+        prior: "2040-12-01",
+        expected: [["Mon Dec 31", "80.00"]],
+      },
+      {
+        name: "February charge on March 1 appears once on its own date",
+        from: "2041-02-25",
+        due: 31,
+        recorded: "2041-03-01",
+
+        expected: [["Fri Mar 01", "80.00"]],
+      },
+      {
+        name: "early unpaid monthly charge claims next year",
+        from: "2041-01-01",
+        due: 1,
+        recorded: "2040-12-31",
+
         expected: [],
+      },
+      {
+        name: "early paid monthly charge claims next year",
+        from: "2041-01-01",
+        due: 1,
+        recorded: "2040-12-31",
+        paid: true,
+        expected: [],
+      },
+      {
+        name: "early unpaid annual charge claims next year",
+        from: "2041-01-01",
+        due: 5,
+        recorded: "2040-12-28",
+        month: 1,
+
+        expected: [],
+      },
+      {
+        name: "early paid annual charge claims next year",
+        from: "2041-01-01",
+        due: 5,
+        recorded: "2040-12-28",
+        month: 1,
+        paid: true,
+        expected: [],
+      },
+      {
+        name: "paid charge inside the window is absent",
+        from: "2041-01-12",
+        due: 12,
+        recorded: "2041-01-13",
+        paid: true,
+        expected: [],
+      },
+      {
+        name: "window from the 28th projects dates in both months",
+        from: "2041-01-28",
+        due: 1,
+        recorded: "2040-12-01",
+        paid: true,
+        expected: [["Fri Feb 01", "80.00"]],
+      },
+      {
+        name: "monthly midpoint tie claims later scheduled date",
+        from: "2041-05-01",
+        due: 1,
+        recorded: "2041-04-16",
+        paid: true,
+        expected: [],
+      },
+      {
+        name: "yearly midpoint tie claims upcoming year",
+        from: "2041-01-01",
+        due: 1,
+        recorded: "2040-07-02",
+        month: 1,
+        paid: true,
+        expected: [],
+      },
+      {
+        name: "ended obligations do not project missing bills",
+        from: "2041-01-12",
+        due: 12,
+        recorded: "2040-12-12",
+        ended: true,
+        paid: true,
+        expected: [],
+      },
+      {
+        name: "two charges claiming one scheduled date both remain recorded",
+        from: "2040-12-29",
+        due: 1,
+        recorded: "2040-12-31",
+        second: "2041-01-01",
+        expected: [
+          ["Mon Dec 31", "80.00"],
+          ["Tue Jan 01", "20.00"],
+        ],
       },
     ]) {
       await t.test(scenario.name, async () => {
@@ -127,7 +239,7 @@ test("recorded charges own monthly and yearly billing cycles", {
             scenario.month ? "yearly" : "monthly",
             scenario.due,
             scenario.month ?? null,
-            scenario.ended ? "2041-01-01" : null,
+            scenario.ended ? "2041-01-10" : null,
           ],
         );
         await db.query(
@@ -135,6 +247,16 @@ test("recorded charges own monthly and yearly billing cycles", {
           values (1, $1, 80.00, $2)`,
           [scenario.recorded, scenario.paid ? scenario.recorded : null],
         );
+        if (scenario.prior) {
+          await db.query("insert into charges (obligation_id, due_on, amount, paid_on) values (1, $1, 80.00, $1)", [
+            scenario.prior,
+          ]);
+        }
+        if (scenario.second) {
+          await db.query("insert into charges (obligation_id, due_on, amount) values (1, $1, 20.00)", [
+            scenario.second,
+          ]);
+        }
         const bills = await billsDue(db, scenario.from, 7);
         assert.deepEqual(
           bills.map((bill) => [bill.day, bill.amount]),
