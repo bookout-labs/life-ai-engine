@@ -157,6 +157,43 @@ CREATE TABLE public.files (
 
 
 --
+-- Name: investment_buys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.investment_buys (
+    id bigint NOT NULL,
+    state text NOT NULL,
+    symbol text NOT NULL,
+    account_ref text NOT NULL,
+    planned_on date,
+    planned_condition text,
+    executed_on date,
+    amount numeric(14,2),
+    CONSTRAINT investment_buys_account_ref_check CHECK ((length(TRIM(BOTH FROM account_ref)) > 0)),
+    CONSTRAINT investment_buys_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT investment_buys_check CHECK (((state <> 'planned'::text) OR (((planned_on IS NOT NULL) OR (planned_condition IS NOT NULL)) AND (executed_on IS NULL)))),
+    CONSTRAINT investment_buys_check1 CHECK (((state <> 'completed'::text) OR ((executed_on IS NOT NULL) AND (amount IS NOT NULL)))),
+    CONSTRAINT investment_buys_planned_condition_check CHECK ((length(TRIM(BOTH FROM planned_condition)) > 0)),
+    CONSTRAINT investment_buys_state_check CHECK ((state = ANY (ARRAY['planned'::text, 'completed'::text]))),
+    CONSTRAINT investment_buys_symbol_check CHECK ((length(TRIM(BOTH FROM symbol)) > 0))
+);
+
+
+--
+-- Name: investment_buys_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.investment_buys ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.investment_buys_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: involvement; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -369,6 +406,73 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: workout_blocks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workout_blocks (
+    id bigint NOT NULL,
+    workout_id bigint NOT NULL,
+    "position" integer NOT NULL,
+    name text NOT NULL,
+    sets integer,
+    reps integer,
+    weight numeric,
+    weight_unit text,
+    duration_seconds integer,
+    notes text,
+    CONSTRAINT workout_blocks_check CHECK (((weight IS NULL) = (weight_unit IS NULL))),
+    CONSTRAINT workout_blocks_duration_seconds_check CHECK ((duration_seconds > 0)),
+    CONSTRAINT workout_blocks_name_check CHECK ((length(TRIM(BOTH FROM name)) > 0)),
+    CONSTRAINT workout_blocks_position_check CHECK (("position" > 0)),
+    CONSTRAINT workout_blocks_reps_check CHECK ((reps > 0)),
+    CONSTRAINT workout_blocks_sets_check CHECK ((sets > 0)),
+    CONSTRAINT workout_blocks_weight_check CHECK (((weight >= (0)::numeric) AND (weight < 'Infinity'::numeric))),
+    CONSTRAINT workout_blocks_weight_unit_check CHECK ((weight_unit = ANY (ARRAY['lb'::text, 'kg'::text])))
+);
+
+
+--
+-- Name: workout_blocks_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workout_blocks ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.workout_blocks_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: workouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workouts (
+    id bigint NOT NULL,
+    performed_on date NOT NULL,
+    kind text NOT NULL,
+    notes text,
+    CONSTRAINT workouts_kind_check CHECK ((length(TRIM(BOTH FROM kind)) > 0))
+);
+
+
+--
+-- Name: workouts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workouts ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.workouts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: activities activities_member_id_activity_season_start_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -438,6 +542,14 @@ ALTER TABLE ONLY public.events
 
 ALTER TABLE ONLY public.files
     ADD CONSTRAINT files_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: investment_buys investment_buys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investment_buys
+    ADD CONSTRAINT investment_buys_pkey PRIMARY KEY (id);
 
 
 --
@@ -537,6 +649,30 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
+-- Name: workout_blocks workout_blocks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workout_blocks
+    ADD CONSTRAINT workout_blocks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workout_blocks workout_blocks_workout_id_position_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workout_blocks
+    ADD CONSTRAINT workout_blocks_workout_id_position_key UNIQUE (workout_id, "position");
+
+
+--
+-- Name: workouts workouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workouts
+    ADD CONSTRAINT workouts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: page_revisions_history; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -548,6 +684,13 @@ CREATE INDEX page_revisions_history ON public.page_revisions USING btree (page_i
 --
 
 CREATE INDEX pages_search ON public.pages USING gin (search) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: workouts_performed_on_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workouts_performed_on_idx ON public.workouts USING btree (performed_on DESC, id DESC);
 
 
 --
@@ -647,6 +790,14 @@ ALTER TABLE ONLY public.relationships
 
 
 --
+-- Name: workout_blocks workout_blocks_workout_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workout_blocks
+    ADD CONSTRAINT workout_blocks_workout_id_fkey FOREIGN KEY (workout_id) REFERENCES public.workouts(id) ON DELETE CASCADE;
+
+
+--
 -- PostgreSQL database dump complete
 --
 
@@ -663,4 +814,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261108230000'),
     ('20261109120000'),
     ('20261109130000'),
-    ('20261109180000');
+    ('20261109180000'),
+    ('20261110000000'),
+    ('20261110120000');
