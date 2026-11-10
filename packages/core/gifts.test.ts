@@ -82,9 +82,9 @@ test("recipients use exactly one identity and only ideas may have no price", () 
 });
 
 test("gift budgets include empty recipients and move commitments to purchases", {
-  skip: !process.env.GIFTS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new pg.Client({ connectionString: process.env.GIFTS_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `gifts_${randomUUID().replaceAll("-", "")}`;
   try {
@@ -219,7 +219,7 @@ test("gift budgets include empty recipients and move commitments to purchases", 
         await assert.rejects(db.query(`update ${table} set budget = $1`, [budget]));
       }
     }
-    const pool = new pg.Pool({ connectionString: process.env.GIFTS_TEST_DATABASE_URL });
+    const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     const concurrent = { ...input, request_id: randomUUID() };
     try {
       const run = async () => {
@@ -334,9 +334,9 @@ test("gift budgets include empty recipients and move commitments to purchases", 
 });
 
 test("recipient migration reverses on empty tables and refuses populated gift tables", {
-  skip: !process.env.GIFTS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new pg.Client({ connectionString: process.env.GIFTS_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `gift_migration_${randomUUID().replaceAll("-", "")}`;
   const original = await readFile(new URL("../../db/migrations/20261110210000_gifts.sql", import.meta.url), "utf8");

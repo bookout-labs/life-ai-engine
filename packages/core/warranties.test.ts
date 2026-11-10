@@ -43,7 +43,7 @@ test("warranty MCP tools advertise plain object schemas and read-only check", as
   }
 });
 
-const connectionString = process.env.WARRANTIES_TEST_DATABASE_URL;
+const connectionString = process.env.TEST_DATABASE_URL;
 test("warranties record coverage and check its expiry", { skip: !connectionString }, async (t) => {
   const db = new pg.Client({ connectionString });
   await db.connect();

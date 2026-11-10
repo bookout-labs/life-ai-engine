@@ -8,9 +8,9 @@ import { schedule } from "./schedule.ts";
 import { addWeeklySessions, previewWeeklySessions, recordWeeklyPattern } from "./weekly-patterns.ts";
 
 test("weekly sessions preserve local times and converge across retries", {
-  skip: !process.env.WEEKLY_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
-  const db = new pg.Client({ connectionString: process.env.WEEKLY_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `weekly_${randomUUID().replaceAll("-", "")}`;
   try {
@@ -165,7 +165,7 @@ test("weekly sessions preserve local times and converge across retries", {
       );
     });
     await t.test("concurrent requests converge using a pool", async () => {
-      const url = new URL(process.env.WEEKLY_TEST_DATABASE_URL ?? "");
+      const url = new URL(process.env.TEST_DATABASE_URL ?? "");
       url.searchParams.set("options", `-c search_path=${namespace}`);
       const pool = new pg.Pool({ connectionString: url.toString() });
       try {
@@ -314,7 +314,7 @@ test("weekly sessions preserve local times and converge across retries", {
       });
       const { tools } = await import(new URL("../../apps/mcp/worker.ts", import.meta.url).href);
       hooks.deregister();
-      const url = new URL(process.env.WEEKLY_TEST_DATABASE_URL ?? "");
+      const url = new URL(process.env.TEST_DATABASE_URL ?? "");
       url.searchParams.set("options", `-c search_path=${namespace}`);
       const call = async (name: string, args: unknown) => {
         const response = await createMcpHandler(() =>

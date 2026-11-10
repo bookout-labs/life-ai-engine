@@ -111,13 +111,13 @@ test("invalid plans and inputs are rejected through the public boundary", () => 
 });
 
 test("plan revisions round-trip, retry unchanged and select by date on a disposable database", {
-  skip: !process.env.COMMISSION_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const { randomUUID } = await import("node:crypto");
   const { readFile } = await import("node:fs/promises");
   const { default: pg } = await import("pg");
   const { commissionSplit, recordCommissionPlan } = await import("./commission-split.ts");
-  const db = new pg.Client({ connectionString: process.env.COMMISSION_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `commission_${randomUUID().replaceAll("-", "")}`;
   const migration = await readFile(
@@ -188,7 +188,7 @@ test("plan revisions round-trip, retry unchanged and select by date on a disposa
     );
     const retryInput = { ...input, request_id: randomUUID(), effective_on: "2039-01-01" };
     const retry = async () => {
-      const connection = new pg.Client({ connectionString: process.env.COMMISSION_TEST_DATABASE_URL });
+      const connection = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
       await connection.connect();
       try {
         await connection.query(`set search_path to ${namespace}`);
@@ -302,7 +302,7 @@ test("integer arithmetic stays exact at the input limit", () => {
 });
 
 test("MCP reports caller-fixable commission plan errors", {
-  skip: !process.env.COMMISSION_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const { registerHooks } = await import("node:module");
   const { readFile } = await import("node:fs/promises");
@@ -320,7 +320,7 @@ test("MCP reports caller-fixable commission plan errors", {
   });
   const { tools, writeResult } = await import(new URL("../../apps/mcp/worker.ts", import.meta.url).href);
   hooks.deregister();
-  const db = new pg.Client({ connectionString: process.env.COMMISSION_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `commission_${crypto.randomUUID().replaceAll("-", "")}`;
   try {
@@ -335,7 +335,7 @@ test("MCP reports caller-fixable commission plan errors", {
       const sql = await readFile(new URL(`../../db/migrations/${name}.sql`, import.meta.url), "utf8");
       await db.query(sql.split("-- migrate:down")[0] ?? "");
     }
-    const url = new URL(process.env.COMMISSION_TEST_DATABASE_URL ?? "");
+    const url = new URL(process.env.TEST_DATABASE_URL ?? "");
     url.searchParams.set("options", `-c search_path=${namespace}`);
     const call = async (rules: unknown[]) => {
       const response = await createMcpHandler(() =>

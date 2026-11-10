@@ -58,10 +58,10 @@ test("errors fail without leaking input", () => {
 });
 
 test("handoff creation rejects reused slugs and concurrent first writes atomically", {
-  skip: !process.env.HANDOFF_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const { default: pg } = await import("pg");
-  const connectionString = process.env.HANDOFF_TEST_DATABASE_URL;
+  const connectionString = process.env.TEST_DATABASE_URL;
   const source = new pg.Pool({ connectionString });
   const schema = `handoff_test_${process.pid}`;
   const db = new pg.Pool({ connectionString, options: `-c search_path=${schema},public` });
