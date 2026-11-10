@@ -20,6 +20,10 @@ test("goal payloads require a complete measure, a real date and a plan slug", ()
     { area: " " },
     { area: "a".repeat(81) },
     { title: "\t" },
+    { title: "a".repeat(201) },
+    { measure: { target: "1", unit: "a".repeat(41) } },
+    { due_on: "1899-12-31" },
+    { due_on: "2201-01-01" },
     { page_slug: "invalid slug" },
     { due_on: "2040-02-30" },
     { measure: { target: "2" } },
@@ -29,6 +33,8 @@ test("goal payloads require a complete measure, a real date and a plan slug", ()
     { measure: { target: "2", unit: " " } },
   ])
     assert.equal(recordGoalSchema.safeParse({ ...input(), ...patch }).success, false);
+  assert.equal(recordGoalSchema.parse({ ...input(), area: "  PRACTICE  " }).area, "practice");
+  assert.equal(setGoalStatusSchema.safeParse({ id: "1".repeat(20), status: "done" }).success, false);
   assert.equal(setGoalStatusSchema.safeParse({ id: "1", status: "done" }).success, true);
   assert.equal(setGoalStatusSchema.safeParse({ id: "1", status: "paused" }).success, false);
   assert.equal(setGoalStatusSchema.safeParse({ id: "0", status: "active" }).success, false);
@@ -86,6 +92,11 @@ test("goals group active records, preserve retries and change status on a dispos
     assert.equal((await recordGoal(client, firstInput)).goal.status, "done");
     assert.equal((await setGoalStatus(client, { id: first.goal.id, status: "active" }))?.status, "active");
     assert.equal(await setGoalStatus(client, { id: "9223372036854775807", status: "done" }), null);
+    assert.equal(await setGoalStatus(client, { id: "9223372036854775808", status: "done" }), null);
+    await client.query("update pages set deleted_at = now() where slug = $1", [firstInput.page_slug]);
+    assert.equal((await activeGoals(client))[0]?.goals[0]?.page_deleted, true);
+    await assert.rejects(recordGoal(client, input()), /deleted/i);
+    await client.query("update pages set deleted_at = null where slug = $1", [firstInput.page_slug]);
 
     for (const [column, value] of [
       ["area", " "],
