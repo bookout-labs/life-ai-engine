@@ -4,6 +4,19 @@
       "serverName": "claude.ai Gmail"
     }
   ],
+  "permissions": {
+    "deny": [
+      "Edit(**/AGENTS.md)",
+      "Edit(**/CLAUDE.md)",
+      "Edit(/.claude/rules/**)",
+      "Edit(~/.claude/CLAUDE.md)",
+      "Edit(~/.claude/rules/**)",
+      "Edit(~/.claude/projects/*/memory/**)",
+      "Edit(~/.codex/AGENTS.md)",
+      "Edit(~/.codex/rules/**)",
+      "Edit(~/.codex/memories*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -37,7 +50,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit|Bash|Delete",
+        "matcher": "Write|Edit|MultiEdit|Delete",
         "hooks": [
           {
             "type": "command",
