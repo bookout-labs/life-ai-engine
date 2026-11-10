@@ -28,7 +28,8 @@ import { readMoneyCheck } from "../../packages/core/money-check.ts";
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
 import { recordInvestmentBuy, recordInvestmentBuySchema } from "../../packages/core/record-investment-buy.ts";
 import { schedule, today } from "../../packages/core/schedule.ts";
-import { readSpending, spendingInputSchema } from "../../packages/core/spending.ts";
+import { importSpending, readSpending, spendingInputSchema } from "../../packages/core/spending.ts";
+import { fromConnector, importTransactionsSchema } from "../../packages/core/spending-import.ts";
 import { trainingTrend, trainingTrendSchema } from "../../packages/core/training-trend.ts";
 import { publicOrigin } from "./origin.ts";
 
@@ -97,13 +98,24 @@ function tools(env: Env): McpServer {
     "spending",
     {
       description:
-        "Read USD spending for a month (YYYY-MM), optionally by category, through today in America/Chicago. Includes category targets, calendar-day pace, top 10 merchants and unusual-charge cues from loaded history. Draft targets are proposals. Expenses positive; credits negative. Pending, transfer, hidden and income rows excluded. No import capability.",
+        "Read USD spending for a month (YYYY-MM), optionally by category, through today in America/Chicago. Includes category targets, calendar-day pace, top 10 merchants and unusual-charge cues from loaded history. Draft targets are proposals. Expenses positive; credits negative. Pending, transfer, hidden and income rows excluded.",
       inputSchema: spendingInputSchema,
       annotations: { readOnlyHint: true },
     },
     async (input) => ({
       content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => readSpending(db, input))) }],
     }),
+  );
+  server.registerTool(
+    "import_transactions",
+    {
+      description:
+        "Import one finance connector page as-is, up to 100 transactions. Re-importing a page is safe; unchanged rows are not updated. Connector amounts are negated into USD expenses positive and refunds negative. Account references use account_id only. Defaults exclude Transfer and Credit Card Payment as transfer, Paychecks and Interest as income. Supply exclude for renamed categories and hidden for a hidden page. Returns processed, inserted, updated and excluded counts; excluded counts all excluded input rows, including unchanged ones.",
+      inputSchema: importTransactionsSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ transactions, ...options }) =>
+      writeResult(env, (db) => importSpending(db, fromConnector(transactions, options))),
   );
   server.registerTool(
     "finance_records",

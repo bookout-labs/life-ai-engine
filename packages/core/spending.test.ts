@@ -109,7 +109,12 @@ test("above-typical cue uses prior-month median, minimum sample, and inclusive f
 
 test("first-seen cue requires the floor and no earlier positive eligible charge across categories", () => {
   const report = (rows: SpendingTransaction[]) =>
-    buildSpending(rows, [], { month: "2040-02", category: "Synthetic category" }, "2040-02-15").unusual;
+    buildSpending(
+      [charge("coverage", "1.00", { posted_on: "2039-11-01", merchant: "History coverage" }), ...rows],
+      [],
+      { month: "2040-02", category: "Synthetic category" },
+      "2040-02-15",
+    ).unusual;
   assert.equal(report([charge("a", "100.00")])[0]?.rule, "first_seen");
   assert.deepEqual(report([charge("a", "99.99")]), []);
   assert.deepEqual(
@@ -147,6 +152,44 @@ test("disposable database imports converge, corrections replace values, invalid 
     const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
     await db.query(schema.replace(/^\\.*$/gm, ""));
     await db.query("set search_path to public");
+    await t.test("reversed concurrent imports succeed with overlapping keys", async () => {
+      const other = new Client({ connectionString: process.env.SPENDING_TEST_DATABASE_URL });
+      await other.connect();
+      try {
+        await db.query(
+          "create function slow_import() returns trigger language plpgsql as $$ begin perform pg_sleep(0.05); return new; end $$; create trigger slow_import before insert on transactions for each row execute function slow_import()",
+        );
+        const rows = [charge("concurrent-a", "1.00"), charge("concurrent-b", "2.00")];
+        await Promise.all([importSpending(db, rows), importSpending(other, rows.toReversed())]);
+        assert.equal((await readSpending(db, { month: "2040-02" }, "2040-02-29")).total, "3.00");
+      } finally {
+        await other.end();
+        await db.query(
+          "drop trigger slow_import on transactions; drop function slow_import(); delete from transactions",
+        );
+      }
+    });
+    await t.test("identical reimports update nothing and corrections are counted", async () => {
+      assert.deepEqual(await importSpending(db, [charge("count", "1.00")]), {
+        processed: 1,
+        inserted: 1,
+        updated: 0,
+        excluded: 0,
+      });
+      assert.deepEqual(await importSpending(db, [charge("count", "1.00")]), {
+        processed: 1,
+        inserted: 0,
+        updated: 0,
+        excluded: 0,
+      });
+      assert.deepEqual(await importSpending(db, [charge("count", "2.00", { exclusion_reason: "transfer" })]), {
+        processed: 1,
+        inserted: 0,
+        updated: 1,
+        excluded: 1,
+      });
+      await db.query("delete from transactions");
+    });
     await importSpending(db, [
       charge("a", "0.10"),
       charge("b", "0.20"),
@@ -179,6 +222,7 @@ test("disposable database imports converge, corrections replace values, invalid 
     assert.equal(after.as_of, "2040-03-01");
     assert.equal(after.total, "1.00");
     const history = [
+      charge("coverage", "1.00", { posted_on: "2039-11-01", merchant: "History coverage" }),
       charge("h1", "20.00", { posted_on: "2040-01-01" }),
       charge("h2", "30.00", { posted_on: "2040-01-02" }),
       charge("h3", "40.00", { posted_on: "2040-01-03" }),
@@ -196,4 +240,25 @@ test("disposable database imports converge, corrections replace values, invalid 
   } finally {
     await db.end();
   }
+});
+
+test("first-seen is suppressed until each source has 90 days of loaded history", () => {
+  const current = charge("new", "150.00", { merchant: "New synthetic" });
+  const report = (history: SpendingTransaction[]) =>
+    buildSpending([...history, current], [], { month: "2040-02" }, "2040-02-15");
+  assert.deepEqual(report([]).unusual, []);
+  assert.match(report([]).notes.join(" "), /first.seen.*suppress/i);
+  assert.deepEqual(report([charge("short", "1.00", { posted_on: "2039-11-04" })]).unusual, []);
+  assert.equal(report([charge("old", "1.00", { posted_on: "2039-11-03" })]).unusual[0]?.rule, "first_seen");
+  assert.deepEqual(report([charge("other", "1.00", { source: "other", posted_on: "2039-01-01" })]).unusual, []);
+});
+test("category filters ignore surrounding whitespace and case", () => {
+  const result = buildSpending(
+    [charge("a", "12.34")],
+    [target],
+    { month: "2040-02", category: "  SYNTHETIC CATEGORY " },
+    "2040-02-15",
+  );
+  assert.equal(result.total, "12.34");
+  assert.equal(result.categories[0]?.target?.monthly_max, "580.00");
 });

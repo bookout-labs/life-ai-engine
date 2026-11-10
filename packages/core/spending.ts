@@ -36,17 +36,37 @@ function decimal(value: bigint): string {
 
 // Requires a dedicated connected client, not a pool or an existing transaction.
 export async function importSpending(db: pg.ClientBase, input: readonly SpendingTransaction[]) {
-  const rows = z.array(spendingTransactionSchema).parse(input);
+  const rows = z
+    .array(spendingTransactionSchema)
+    .parse(input)
+    .sort((a, b) =>
+      a.source < b.source
+        ? -1
+        : a.source > b.source
+          ? 1
+          : a.source_id < b.source_id
+            ? -1
+            : a.source_id > b.source_id
+              ? 1
+              : 0,
+    );
+  let inserted = 0;
+  let updated = 0;
   await db.query("begin");
   try {
     for (const row of rows) {
-      await db.query(
+      const result = await db.query<{ inserted: boolean }>(
         `insert into transactions (source, source_id, posted_on, amount, merchant, category, account_ref, pending, exclusion_reason)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          on conflict (source, source_id) do update set
            posted_on = excluded.posted_on, amount = excluded.amount, merchant = excluded.merchant,
            category = excluded.category, account_ref = excluded.account_ref, pending = excluded.pending,
-           exclusion_reason = excluded.exclusion_reason`,
+           exclusion_reason = excluded.exclusion_reason
+         where (transactions.posted_on, transactions.amount, transactions.merchant, transactions.category,
+           transactions.account_ref, transactions.pending, transactions.exclusion_reason)
+         is distinct from (excluded.posted_on, excluded.amount, excluded.merchant, excluded.category,
+           excluded.account_ref, excluded.pending, excluded.exclusion_reason)
+         returning (xmax = 0) as inserted`,
         [
           row.source,
           row.source_id,
@@ -59,9 +79,16 @@ export async function importSpending(db: pg.ClientBase, input: readonly Spending
           row.exclusion_reason,
         ],
       );
+      if (result.rows[0]?.inserted) inserted++;
+      else if (result.rowCount) updated++;
     }
     await db.query("commit");
-    return { processed: rows.length };
+    return {
+      processed: rows.length,
+      inserted,
+      updated,
+      excluded: rows.filter((row) => row.exclusion_reason !== null).length,
+    };
   } catch (error) {
     await db.query("rollback");
     throw error;
@@ -90,10 +117,16 @@ export function buildSpending(
   const elapsed = through < start ? 0 : Number(through.slice(8, 10));
   const daysInMonth = days.getUTCDate();
   const eligible = rows.filter((row) => !row.pending && row.exclusion_reason === null && row.posted_on <= through);
-  const current = eligible.filter((row) => row.posted_on >= start && (!category || row.category === category));
+  const matchesCategory = (name: string) => !category || name.trim().toLowerCase() === category.trim().toLowerCase();
+  const current = eligible.filter((row) => row.posted_on >= start && matchesCategory(row.category));
+  const historyCutoff = new Date(`${start}T00:00:00Z`);
+  historyCutoff.setUTCDate(historyCutoff.getUTCDate() - 90);
+  const coveredSources = new Set(
+    rows.filter((row) => row.posted_on <= historyCutoff.toISOString().slice(0, 10)).map((row) => row.source),
+  );
   const sum = (items: readonly SpendingTransaction[]) => items.reduce((total, row) => total + cents(row.amount), 0n);
   const categories = [...new Set([...current.map((row) => row.category), ...targets.map((target) => target.category)])]
-    .filter((name) => !category || name === category)
+    .filter(matchesCategory)
     .sort();
   const byCategory = categories.map((name) => {
     const spend = sum(current.filter((row) => row.category === name));
@@ -148,7 +181,7 @@ export function buildSpending(
           (rule) =>
             cents(row.amount) >= rule.floor &&
             (rule.rule === "first_seen"
-              ? !seenEarlier
+              ? coveredSources.has(row.source) && !seenEarlier
               : history.length >= rule.minimum_history && cents(row.amount) * 2n >= medianTwice * rule.multiple),
         )
         .map((rule) => ({
@@ -180,7 +213,12 @@ export function buildSpending(
     notes: [
       "USD. Expenses positive; refunds negative. Pending, transfers, hidden and income excluded.",
       "Draft targets are proposals. Pace is the monthly target times elapsed calendar days, rounded to cents.",
-      "Both unusual rules require at least USD 100. Above-typical means at least 3 times the prior-month median with 3 prior positive charges. First-seen means the first positive charge at a merchant in loaded history. Incomplete imports limit these cues; totals reflect only imported rows.",
+      ...([...new Set(rows.map((row) => row.source))].some((source) => !coveredSources.has(source)) || rows.length === 0
+        ? [
+            "First-seen suppressed for sources without loaded history starting at least 90 days before the report month.",
+          ]
+        : []),
+      "Both unusual rules require at least USD 100. Above-typical means at least 3 times the prior-month median with 3 prior positive charges. First-seen means the first positive charge at a merchant in loaded history, only when that source has at least 90 days of history before the month starts. Incomplete imports limit these cues; totals reflect only imported rows.",
     ],
   };
 }
