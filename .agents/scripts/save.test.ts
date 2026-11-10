@@ -6,8 +6,6 @@ import { dirname, join, resolve } from "node:path";
 import { type TestContext, test } from "node:test";
 import { promisify } from "node:util";
 
-import { waitForMerge } from "./save-wait.ts";
-
 const root = resolve(import.meta.dirname, "../..");
 
 function fixture(t: TestContext) {
@@ -26,7 +24,7 @@ function fixture(t: TestContext) {
   };
   put("package.json", '{"type":"module"}');
   put(".gitignore", "node_modules/\n");
-  for (const file of ["save.ts", "save-wait.ts", "proof.ts", "review.ts"]) {
+  for (const file of ["save.ts", "proof.ts", "review.ts"]) {
     put(`.agents/scripts/${file}`, readFileSync(join(root, ".agents/scripts", file), "utf8"));
   }
   put(
@@ -90,15 +88,8 @@ exec ${quote(realGit)} "$@"
     if (command === process.env.FAIL_GH) { console.error('injected gh failure'); process.exit(1); }
     if (command === 'token generate') console.log('fake-token');
     if (command === 'issue view') console.log(JSON.stringify({state:'OPEN', title:'fixture', body:'fixture', comments:[]}));
-    if (command === 'pr merge' && process.env.MERGE_FIXTURE) {
-      require('node:child_process').execFileSync(${JSON.stringify(realGit)}, ['--git-dir', ${JSON.stringify(join(dir, "remote"))}, 'fetch', process.cwd(), 'HEAD:refs/heads/main'], {stdio:'pipe'});
-    }
-    if (command === 'run list' && !process.env.NO_SHIP) console.log('123 https://example.invalid/run/123');
-    if (command === 'pr view' && args.includes('mergeCommit')) { console.log('merge-sha-fixture'); process.exit(0); }
     if (command === 'pr list' && process.env.EXISTING) console.log('https://example.invalid/pr/1');
     if (command === 'pr create') console.log('https://example.invalid/pr/1');
-    if (command === 'pr view') console.log(JSON.stringify({state:process.env.MERGED ? 'MERGED' : 'OPEN', statusCheckRollup:['check','gate','secrets'].map(name => ({name,status:'COMPLETED',conclusion:process.env.MERGED ? 'SUCCESS' : 'FAILURE'}))}));
-    if (command === 'pr checks' && !process.env.MERGED) { console.error('check failed: fixture diagnostic tail'); process.exit(1); }
   `,
   );
   script(
@@ -132,22 +123,30 @@ exec ${quote(realGit)} "$@"
 }
 
 const args = ["--issue", "96", "--proof", "Synthetic production smoke"];
+test("a queueing failure says the PR is pushed but not queued", (t) => {
+  const f = fixture(t);
+  f.put("docs/note.md", "change");
+  const result = f.run({ FAIL_GH: "pr merge" }, "docs/note.md", ...args);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /save: .* is pushed but not queued/);
+  assert.doesNotMatch(result.stderr, /Command failed|at .*file:/);
+});
 test("refuses on main", (t) => {
   const f = fixture(t);
   f.git("switch", "main");
   assert.match(f.run({}, "docs/", ...args).stderr, /never from main/);
 });
-test("folder stages renames and deletions, reuses PR, trailers and match-head agree", (t) => {
+test("folder stages renames and deletions, reuses the PR and queues it", (t) => {
   const f = fixture(t);
   f.git("mv", "docs/note.md", "docs/renamed.md");
   f.git("rm", "docs/deleted.md");
-  const result = f.run({ EXISTING: "1" }, "docs/", ...args, "--no-wait");
+  const result = f.run({ EXISTING: "1" }, "docs/", ...args);
   assert.equal(result.status, 0, result.stderr);
   const calls = readFileSync(join(f.dir, "gh.log"), "utf8");
   assert.match(calls, /"pr","edit"/);
   assert.doesNotMatch(calls, /"pr","create"/);
-  assert.match(calls, /--match-head-commit/);
-  assert.match(calls, new RegExp(f.git("rev-parse", "HEAD")));
+  assert.match(calls, /"pr","merge","https:\/\/example.invalid\/pr\/1","--auto"\]/);
+  assert.doesNotMatch(calls, /disable-auto|match-head-commit/);
   assert.match(calls, /Work: LAB.1.93/);
   assert.match(calls, /Agent:/);
   assert.match(calls, /Session:/);
@@ -166,7 +165,6 @@ for (const surface of ["diff", "message", "body", "missing"])
         : surface === "body"
           ? ["--proof", "synthetic-private-marker"]
           : []),
-      "--no-wait",
     );
     assert.equal(result.status, 1);
     assert.doesNotMatch(result.stderr, /synthetic-private-marker/);
@@ -177,103 +175,6 @@ test("check failure carries diagnostic tail", (t) => {
   f.put("docs/note.md", "changed");
   assert.match(f.run({ FAIL_CHECK: "1" }, "docs/", ...args).stderr, /fixture diagnostic tail/);
 });
-for (const [name, env, status, output] of [
-  ["passes", {}, 0, /Production check passed: https:\/\/example.invalid\/run\/123/],
-  ["fails", { FAIL_GH: "run watch" }, 1, /production check failed: https:\/\/example.invalid\/run\/123/],
-  [
-    "never starts",
-    { NO_SHIP: "1", NODE_OPTIONS: "--require ./fast-timers.cjs" },
-    1,
-    /never started the production check/,
-  ],
-] as const) {
-  test(`production check ${name}`, (t) => {
-    const f = fixture(t);
-    writeFileSync(join(f.repo, "fast-timers.cjs"), "global.setTimeout = (fn) => { fn(); return 0; };");
-    f.put("docs/note.md", "changed");
-    const result = f.run({ MERGED: "1", MERGE_FIXTURE: "1", ...env }, "docs/", ...args);
-    assert.equal(result.status, status, result.stderr);
-    assert.match(result.stdout + result.stderr, output);
-    const calls = readFileSync(join(f.dir, "gh.log"), "utf8");
-    assert.match(calls, /"--commit","merge-sha-fixture"/);
-    if (name !== "never starts") assert.match(calls, /"run","watch","123","--exit-status"/);
-  });
-}
-
-const check = (name: string, status = "COMPLETED", conclusion: string | null = "SUCCESS") => ({
-  name,
-  status,
-  conclusion,
-});
-const passed = [check("check"), check("gate"), check("secrets")];
-
-test("merge wait includes missing and pending checks and queue delay", async () => {
-  const snapshots = [
-    { state: "OPEN", statusCheckRollup: [] },
-    { state: "OPEN", statusCheckRollup: [check("check"), check("secrets")] },
-    { state: "OPEN", statusCheckRollup: [check("check"), check("secrets"), check("gate", "IN_PROGRESS", null)] },
-    { state: "OPEN", statusCheckRollup: passed },
-    { state: "MERGED", statusCheckRollup: passed },
-  ];
-  let pauses = 0;
-  await waitForMerge(() => JSON.stringify(snapshots.shift()), "pr", {
-    pause: async () => {
-      pauses++;
-    },
-  });
-  assert.equal(pauses, 4);
-  assert.equal(snapshots.length, 0);
-});
-for (const name of ["check", "gate", "secrets"])
-  test(`merge wait fails immediately when ${name} fails`, async () => {
-    await assert.rejects(
-      waitForMerge(
-        () => JSON.stringify({ state: "OPEN", statusCheckRollup: [check(name, "COMPLETED", "FAILURE")] }),
-        "pr",
-        {
-          pause: async () => {
-            assert.fail("must not wait after failure");
-          },
-        },
-      ),
-      new RegExp(`${name} failed`),
-    );
-  });
-test("merge wait times out even if all checks pass but the queue never merges", async () => {
-  let elapsed = 0;
-  await assert.rejects(
-    waitForMerge(() => JSON.stringify({ state: "OPEN", statusCheckRollup: passed }), "pr", {
-      now: () => elapsed,
-      pause: async () => {
-        elapsed += 5000;
-      },
-      timeoutMs: 30 * 60_000,
-    }),
-    /Timed out/,
-  );
-  assert.equal(elapsed, 30 * 60_000);
-});
-
-test("merge wait ignores superseded failed and canceled runs", async () => {
-  await waitForMerge(
-    () =>
-      JSON.stringify({
-        state: "MERGED",
-        statusCheckRollup: [
-          ...passed.map((c) => ({ ...c, startedAt: "2026-11-09T17:00:00Z" })),
-          { ...check("gate", "COMPLETED", "FAILURE"), startedAt: "2026-11-09T16:00:00Z" },
-          { ...check("secrets", "COMPLETED", "CANCELLED"), startedAt: "2026-11-09T16:00:00Z" },
-        ],
-      }),
-    "pr",
-    {
-      pause: async () => {
-        assert.fail("already merged with current checks successful");
-      },
-    },
-  );
-});
-
 for (const target of ["../.agents/other", "../missing", "../../outside"]) {
   test(`saves retargeted alias to ${target}`, (t) => {
     const f = fixture(t);
@@ -324,7 +225,7 @@ for (const path of [
     f.put(".agents/skills/lab/SKILL.md", "edited\n");
     f.put("docs/note.md", "unrelated edit\n");
     const endToEnd = path === ".claude/skills/lab/SKILL.md";
-    const result = f.run({}, path, ...(endToEnd ? [...args, "--no-wait"] : []));
+    const result = f.run({}, path, ...(endToEnd ? [...args] : []));
     assert.equal(result.status, endToEnd ? 0 : 1, result.stderr);
     if (endToEnd) {
       assert.equal(f.git("show", "HEAD:.agents/skills/lab/SKILL.md"), "edited");
@@ -397,7 +298,7 @@ for (const path of ["external/note.md", "../../x"]) {
   test(`refuses ${path} before staging any named file`, (t) => {
     const f = fixture(t);
     f.put("docs/note.md", "edited\n");
-    const result = f.run({}, "docs/note.md", path, ...args, "--no-wait");
+    const result = f.run({}, "docs/note.md", path, ...args);
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /save: .*outside.*repository/i);
     assert.equal(f.git("diff", "--cached", "--name-only"), "", result.stderr);
@@ -471,7 +372,6 @@ test("current worktrees save concurrently to separate remote branches", async (t
           "fixture",
           `docs/worker-${index}.md`,
           ...args,
-          "--no-wait",
         ],
         { cwd, env: { ...f.env, REAL_PUSH: "1" }, timeout: 20_000 },
       ),
@@ -508,13 +408,13 @@ test("remote branch advance refuses before staging and permits recovery", (t) =>
   f.git("switch", "work");
   const head = f.git("rev-parse", "HEAD");
   f.put("docs/note.md", "local change");
-  const result = f.run({}, "docs/note.md", ...args, "--no-wait");
+  const result = f.run({}, "docs/note.md", ...args);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /git merge --autostash origin\/work/);
   assert.equal(f.git("diff", "--cached", "--name-only"), "");
   assert.equal(f.git("rev-parse", "HEAD"), head);
   f.git("merge", "--autostash", "origin/work");
-  const resumed = f.run({ REAL_PUSH: "1" }, "docs/note.md", ...args, "--no-wait");
+  const resumed = f.run({ REAL_PUSH: "1" }, "docs/note.md", ...args);
   assert.equal(resumed.status, 0, resumed.stderr);
   assert.equal(
     f.git("rev-parse", "HEAD"),
@@ -525,17 +425,8 @@ test("remote branch advance refuses before staging and permits recovery", (t) =>
 test("push rejection reports recovery without a stack trace", (t) => {
   const f = fixture(t);
   f.put("docs/note.md", "change");
-  const result = f.run({ FAIL_GIT: "push" }, "docs/note.md", ...args, "--no-wait");
+  const result = f.run({ FAIL_GIT: "push" }, "docs/note.md", ...args);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /save:.*git merge --autostash origin\/work/);
-  assert.doesNotMatch(result.stderr, /Command failed|at .*file:/);
-});
-
-test("merged PR reports a skipped local update", (t) => {
-  const f = fixture(t);
-  f.put("docs/note.md", "change");
-  const result = f.run({ FAIL_GIT: "pull", MERGED: "1", MERGE_FIXTURE: "1" }, "docs/note.md", ...args);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /save:.*merged; local update was skipped.*git pull --ff-only origin main/);
   assert.doesNotMatch(result.stderr, /Command failed|at .*file:/);
 });
