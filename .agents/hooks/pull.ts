@@ -32,7 +32,7 @@ try {
     cwd: repo,
     encoding: "utf8",
     stdio: "pipe",
-    timeout: 60_000,
+    timeout: 20_000,
   });
 } catch (err: unknown) {
   const { stderr, message } = err as { stderr?: string; message: string };
