@@ -33,33 +33,77 @@ function textOrders(sql: string) {
     return part;
   });
   const failures: string[] = [];
-  for (const [i, part] of parts.entries()) {
-    if (part.word !== "select") continue;
+  const selects = parts.flatMap((part, i) => {
+    if (part.word !== "select") return [];
     const end = parts.findIndex(
       (p, j) => j > i && (p.depth < part.depth || (p.depth === part.depth && p.word === "union")),
     );
-    const scope = parts.slice(i + 1, end < 0 ? undefined : end).filter((p) => p.depth === part.depth);
-    const from = scope.findIndex((p) => p.word === "from");
-    if (from < 0) continue;
-    const projection = scope
-      .slice(0, from)
-      .map((p) => p.word)
-      .join(" ");
-    const outputs = new Set(
-      [
-        ...projection.matchAll(
-          /(?:^|, )(?:distinct )?(?:(?:\w+|"[^"]+") \. )?(\w+|"[^"]+") :: text(?: (?:as )?(\w+|"[^"]+"))?(?= ,|$)/g,
-        ),
-      ].map((m) => (m[2] ?? m[1] ?? "").replaceAll('"', "")),
-    );
-    const order = scope.findIndex((p, j) => p.word === "order" && scope[j + 1]?.word === "by");
-    if (order < 0) continue;
-    const ordering = scope
-      .slice(order + 2)
-      .map((p) => p.word)
-      .join(" ");
-    for (const match of ordering.matchAll(/(?:^|, )(\w+|"[^"]+")(?= (?:asc|desc|nulls|limit|offset|fetch)\b| ,|$)/g))
-      if (match[1] && outputs.has(match[1].replaceAll('"', ""))) failures.push(match[1]);
+    const scope = parts.slice(i + 1, end < 0 ? undefined : end);
+    const from = scope.findIndex((p) => p.depth === part.depth && p.word === "from");
+    const outputs = new Set<string>();
+    let expression = "";
+    for (const p of [...scope.slice(0, from), { word: ",", depth: part.depth }]) {
+      if (p.word !== "," || p.depth !== part.depth) {
+        expression += ` ${p.word}`;
+        continue;
+      }
+      const alias = expression.match(/ (\w+|"[^"]+")$/)?.[1];
+      const column = expression.match(/(\w+|"[^"]+") :: text$/)?.[1];
+      if (/:: text(?: (?:as )?(?:\w+|"[^"]+"))?$/.test(expression) || /^ (?:distinct )?to_char \(/.test(expression)) {
+        const name = column ?? alias;
+        if (name) outputs.add(name.replaceAll('"', ""));
+      }
+      expression = "";
+    }
+    return [{ i, end: end < 0 ? parts.length : end, depth: part.depth, scope, outputs }];
+  });
+  const ctes = new Map<string, Set<string>>();
+  for (const select of selects) {
+    if (parts[select.i - 1]?.word === "(" && parts[select.i - 2]?.word === "as") {
+      const name = parts[select.i - 3]?.word;
+      if (name) ctes.set(name, select.outputs);
+    }
+  }
+  for (const select of selects) {
+    const inputs = new Map<string, Set<string>>();
+    for (const [j, p] of select.scope.entries()) {
+      if (p.depth !== select.depth || !["from", "join"].includes(p.word)) continue;
+      const name = select.scope[j + 1]?.word;
+      const columns = name && ctes.get(name);
+      if (!columns) continue;
+      const next = select.scope[j + 2]?.word;
+      const alias = next === "as" ? select.scope[j + 3]?.word : next;
+      inputs.set(
+        alias &&
+          /^[a-z_][a-z_0-9]*$/.test(alias) &&
+          !["order", "where", "left", "join", "group", "cross"].includes(alias)
+          ? alias
+          : name,
+        columns,
+      );
+    }
+    for (let j = select.i + 1; j < select.end; j++) {
+      const p = parts[j];
+      if (p?.word !== "order" || parts[j + 1]?.word !== "by") continue;
+      if (selects.some((nested) => nested.i > select.i && nested.i < j && nested.end > j)) continue;
+      const ordering: string[] = [];
+      for (let k = j + 2; k < select.end; k++) {
+        const token = parts[k];
+        if (!token || token.depth < p.depth) break;
+        if (token.depth === p.depth) ordering.push(token.word);
+      }
+      for (const match of ordering
+        .join(" ")
+        .matchAll(/(?:^|, )(?:(\w+|"[^"]+") \. )?(\w+|"[^"]+")(?= (?:asc|desc|nulls|limit|offset|fetch)\b| ,|$)/g)) {
+        const qualifier = match[1]?.replaceAll('"', "");
+        const column = match[2]?.replaceAll('"', "");
+        if (!column) continue;
+        const inherited = qualifier
+          ? inputs.get(qualifier)?.has(column)
+          : [...inputs.values()].some((columns) => columns.has(column));
+        if (inherited || (!qualifier && p.depth === select.depth && select.outputs.has(column))) failures.push(column);
+      }
+    }
   }
   return failures;
 }
@@ -74,6 +118,14 @@ test("SQL order guard resolves column templates and keeps SELECT scopes separate
   );
   for (const sql of [
     "select id::text from plans order by id",
+    "select to_char(day, 'Dy Mon DD') as day from days order by day",
+    "select max(id)::text as id from plans order by id",
+    "select (id)::text as id from plans order by id",
+    "with t as (select p.id::text as revision from plans p) select * from t as revisions order by revisions.revision",
+    "with t as (select to_char(day, 'Dy Mon DD') as day from days) select * from t order by t.day",
+    "with t as (select id::text from plans) select * from t order by id",
+    "with t as (select id::text from plans) select * from t order by t.id",
+    "with t as (select id::text from plans) select jsonb_agg(t order by t.id) from t",
     "SELECT p.id::TEXT AS revision FROM plans p ORDER BY revision DESC",
     "select member_id::text, related_id::text from links order by member_id, related_id, kind",
     "select day::text as day from days order by day",
@@ -86,6 +138,10 @@ test("SQL order guard resolves column templates and keeps SELECT scopes separate
   for (const sql of [
     "select id::text from plans order by plans.id desc",
     "select id from plans order by id",
+    "select to_char(day, 'Dy Mon DD') as day from days order by days.day",
+    "with t as (select id::text from plans) select * from t order by t.id::bigint",
+    "with t as (select id::text from plans) select jsonb_agg(t order by t.id::bigint) from t",
+    "with t as (select id::text from plans) select p.id from plans p order by p.id",
     "select min(effective_on)::text as effective_on from plans",
     "select id::text, (select x from other order by id) as x from plans order by plans.id",
     "select l.id::text, b.as_of::text from loans l left join lateral (select as_of from balances order by as_of desc limit 1) b on true order by l.id",
@@ -94,7 +150,7 @@ test("SQL order guard resolves column templates and keeps SELECT scopes separate
     assert.deepEqual(textOrders(sql), [], sql);
 });
 
-test("core SQL never orders by an unqualified text-cast output column", async () => {
+test("core SQL never orders by text-converted outputs", async () => {
   const root = new URL("./", import.meta.url);
   const failures: string[] = [];
   for (const name of (await readdir(root)).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))) {
