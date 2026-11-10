@@ -37,6 +37,8 @@ test("Claude: automatic compaction is blocked, and the next stop asks for the ha
   const handoff = f.send(stop);
   assert.equal(handoff.decision, "block");
   assert.match(handoff.reason, /handoff\.ts write handoff/);
+  assert.match(handoff.reason, /Always launch the successor.*pin it and unpin this one/s);
+  assert.doesNotMatch(handoff.reason, /Leave pins unchanged/);
   assert.equal(f.send(stop), undefined, "delivered once");
 });
 
