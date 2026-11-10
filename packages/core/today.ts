@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { z } from "zod";
 import { billsDue, deadlinesDue } from "./bills.ts";
+import { MONEY_CHECK_DAYS, moneyCheckSchema, readMoneyCheck } from "./money-check.ts";
 import { pageList, slugSchema } from "./pages.ts";
 import { schedule } from "./schedule.ts";
 
@@ -24,8 +25,9 @@ const fixtureSchema = z.object({
   ),
   deadlines: z.array(z.object({ due_on: z.string(), item: z.string(), action: z.string(), overdue: z.boolean() })),
   pages: z.array(pageSchema),
+  money_check: moneyCheckSchema.omit({ due_soon: true }).optional(),
 });
-const windows = { events: 7, bills: 7, deadlines: 14 };
+const windows = { events: 7, bills: MONEY_CHECK_DAYS, deadlines: 14 };
 
 function localDate(now: string): string {
   return new Date(now).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
@@ -44,6 +46,7 @@ export function buildToday(input: unknown) {
     members: data.members,
     events: data.events,
     bills: data.bills,
+    ...(data.money_check ? { money_check: data.money_check } : {}),
     deadlines: data.deadlines,
     context: pages.filter((p) => ["person", "area", "project"].includes(p.type)),
     previousDaily: daily.filter((p) => p.slug < dailySlug).at(-1) ?? null,
@@ -59,11 +62,13 @@ export async function readToday(db: pg.ClientBase, now = new Date().toISOString(
     const members = await db.query(
       "select coalesce(goes_by, first_name) as name, species, born::text from members order by id",
     );
+    const bills = await billsDue(db, date, windows.bills);
     const result = buildToday({
       now,
       members: members.rows,
       events: await schedule(db, date, windows.events),
-      bills: await billsDue(db, date, windows.bills),
+      bills,
+      money_check: await readMoneyCheck(db, date, bills),
       deadlines: await deadlinesDue(db, date, windows.deadlines),
       pages: await pageList(db),
     });

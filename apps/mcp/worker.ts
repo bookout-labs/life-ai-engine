@@ -18,6 +18,7 @@ import { accounts, budgetTargets } from "../../packages/core/finances.ts";
 import { activeGoals, recordGoal, recordGoalSchema } from "../../packages/core/goals.ts";
 import { investmentBuys } from "../../packages/core/investment-buys.ts";
 import { logWorkout, logWorkoutSchema } from "../../packages/core/log-workout.ts";
+import { readMoneyCheck } from "../../packages/core/money-check.ts";
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
 import { recordInvestmentBuy, recordInvestmentBuySchema } from "../../packages/core/record-investment-buy.ts";
 import { schedule, today } from "../../packages/core/schedule.ts";
@@ -72,6 +73,18 @@ function tools(env: Env): McpServer {
       }));
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },
+  );
+  server.registerTool(
+    "money_check",
+    {
+      description:
+        "Read money needing attention from today through day six. Returns bills_due rows unchanged, overdue charges from the past 60 days, a stale_unpaid count for older unpaid charges, and the latest confirmed price increase per active obligation. Amount and date estimate flags come from bills_due; unknown amounts are null and counted separately from decimal totals. Percent increases are rounded to two decimals, or null for a zero baseline. No spending or transaction anomaly analysis.",
+      inputSchema: z.object({ from: z.iso.date().optional() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ from = today() }) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => readMoneyCheck(db, from))) }],
+    }),
   );
   server.registerTool(
     "finance_records",
