@@ -12,8 +12,8 @@ const connectorTransaction = z.object({
   merchant_id: id,
   amount: z
     .number()
-    .refine((value) => Math.abs(value) < 1e10)
-    .refine((value) => Number(value.toFixed(2)) === value),
+    .refine((value) => Math.abs(value) < 1e10, "Amount absolute value must be below 10 billion")
+    .refine((value) => Number(value.toFixed(2)) === value, "Amount must be in whole cents"),
   formatted_amount: z.string(),
   category: text,
   category_id: id,
@@ -24,9 +24,12 @@ const connectorTransaction = z.object({
 // Connector default category names. User-renamed categories need an explicit override.
 const defaults: Record<string, z.infer<typeof exclusion>> = {
   Transfer: "transfer",
+  Buy: "transfer",
+  Sell: "transfer",
   "Credit Card Payment": "transfer",
   "Balance Adjustments": "transfer",
   "Business Income": "income",
+  "Dividends & Capital Gains": "income",
   "Other Income": "income",
   Paychecks: "income",
   Interest: "income",
