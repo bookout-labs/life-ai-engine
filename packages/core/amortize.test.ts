@@ -93,6 +93,22 @@ test("biweekly finishes sooner, and its earlier half-payments count only on dail
   assert.ok(saved("daily") > monthly, "half-payments between due dates save more on daily accrual");
 });
 
+test("on monthly accrual each biweekly half-payment counts on the first due date on or after it", () => {
+  // 300.00 at 1% a month over three payments of 102.01. Baseline charges 3.00, 2.01, 1.01: 6.02.
+  // Biweekly pays 51.01 on 02-01, 02-15, 03-01, 03-15, 03-29. The 02-15 half counts on 03-01 and the March
+  // halves on 04-01, so the due dates charge 1% of 300.00, 251.99 and 152.49: 3.00 + 2.52 + 1.52 = 7.04.
+  // Biweekly has paid 51.00 less than baseline by 02-01 and 50.99 less by 03-01, which is the 1.02 it costs.
+  const result = explore([{ loan: loan({ principal: 30_000n, apr: 12_000n, termMonths: 3 }) }], {});
+  assert.equal(scenario(result, "baseline").total_interest, "6.02");
+  assert.deepEqual(scenario(result, "biweekly"), {
+    strategy: "biweekly",
+    payoff_on: "2026-04-01",
+    payments: 6,
+    total_interest: "7.04",
+    interest_saved: "-1.02",
+  });
+});
+
 test("extra monthly principal shortens the loan and saves interest", () => {
   const result = explore([{ loan: loan({ principal: 14_000_000n, apr: 3_600n, termMonths: 240 }) }], {
     extraMonthly: 10_000n,
@@ -259,4 +275,18 @@ test("a daily-accrual balance between payment dates is unsupported, since its ac
     "projected",
     "monthly accrual charges a full month at the due date",
   );
+});
+
+test("an interest-free daily-accrual balance between payment dates is projected, since nothing accrues", () => {
+  // 360.00 at 0% over 36 months is 10.00 a month; 50.00 left on 2026-06-15 is five payments, 2026-07-01 to 2026-11-01.
+  const note = loan({ principal: 36_000n, apr: 0n, termMonths: 36, accrual: "daily" });
+  const result = explore([{ loan: note, start: { balance: 5_000n, on: "2026-06-15" } }], {});
+  assert.equal(result.loans[0]?.status, "projected");
+  assert.deepEqual(scenario(result, "baseline"), {
+    strategy: "baseline",
+    payoff_on: "2026-11-01",
+    payments: 5,
+    total_interest: "0.00",
+    interest_saved: "0.00",
+  });
 });

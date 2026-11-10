@@ -215,7 +215,7 @@ type Standing =
   | { status: "matured_with_balance_outstanding" | "unsupported_start"; reason: string };
 
 // A recorded balance is principal only, and no payment history is stored, so a projection may start
-// only where nothing else is owed: on a due date for daily accrual, any date for monthly, before maturity.
+// only where nothing else is owed: before maturity, and on a due date for interest-bearing daily accrual.
 function standing(loan: Loan, start: Position): Standing {
   const end = maturity(loan);
   if (start.balance > 0n && start.on >= end) {
@@ -224,7 +224,7 @@ function standing(loan: Loan, start: Position): Standing {
       reason: `${dollars(start.balance)} is still owed on ${start.on}, at or after the final payment due ${end}, so no schedule remains to project. The lender's payoff quote is the amount due.`,
     };
   }
-  if (loan.accrual === "daily" && dueDate(loan, dueAfter(loan, start.on) - 1) !== start.on) {
+  if (loan.accrual === "daily" && loan.apr > 0n && dueDate(loan, dueAfter(loan, start.on) - 1) !== start.on) {
     return {
       status: "unsupported_start",
       reason: `The balance on ${start.on} falls between payment dates. Interest accrues daily and the balance is principal only, so the interest accrued since the last payment is unknown. Record a balance as of a payment date to project this loan.`,
@@ -260,7 +260,7 @@ export function explore(
       timing:
         loan.accrual === "daily"
           ? "Interest accrues daily, so paying earlier or more often saves interest."
-          : "Interest is charged once a month, so paying earlier in the month saves nothing; only paying more does.",
+          : "Interest is charged once a month, and a payment counts on its due date or the next one, so paying earlier in the month saves nothing; only paying more does. A biweekly half-payment waits for the next due date, so biweekly saves only through its extra payment each year, and it starts half a payment behind, so with a few months left it costs more.",
       ...standing,
       scenarios: baseline
         ? strategies.map((s) =>
