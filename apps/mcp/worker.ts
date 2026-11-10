@@ -56,6 +56,7 @@ import { recordInvestmentBuy, recordInvestmentBuySchema } from "../../packages/c
 import { schedule, today } from "../../packages/core/schedule.ts";
 import { importSpending, readSpending, spendingInputSchema } from "../../packages/core/spending.ts";
 import { fromConnector, importTransactionsSchema } from "../../packages/core/spending-import.ts";
+import { stalePages } from "../../packages/core/stale-pages.ts";
 import {
   linkSubscriptionMerchant,
   linkSubscriptionMerchantSchema,
@@ -383,6 +384,24 @@ export function tools(env: Env): McpServer {
     { description: "Search personal pages using Postgres full text.", inputSchema: z.object({ text: z.string() }) },
     async ({ text }) => ({
       content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => pageSearch(db, text))) }],
+    }),
+  );
+  server.registerTool(
+    "stale_pages",
+    {
+      description: "List stale personal pages and checkable reasons as of a UTC date.",
+      inputSchema: z.object({ as_of: z.iso.date().optional() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ as_of }) => ({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            await withDb(env, (db) => stalePages(db, as_of ?? new Date().toISOString().slice(0, 10))),
+          ),
+        },
+      ],
     }),
   );
   server.registerTool(
