@@ -58,6 +58,14 @@ import { importSpending, readSpending, spendingInputSchema } from "../../package
 import { fromConnector, importTransactionsSchema } from "../../packages/core/spending-import.ts";
 import { trainingTrend, trainingTrendSchema } from "../../packages/core/training-trend.ts";
 import { listUpkeep, logUpkeepCompletion, logUpkeepCompletionSchema } from "../../packages/core/upkeep.ts";
+import {
+  addWeeklySessions,
+  addWeeklySessionsSchema,
+  previewWeeklySessions,
+  previewWeeklySessionsSchema,
+  recordWeeklyPattern,
+  recordWeeklyPatternSchema,
+} from "../../packages/core/weekly-patterns.ts";
 import { publicOrigin } from "./origin.ts";
 
 const ORIGIN = publicOrigin(
@@ -229,6 +237,36 @@ export function tools(env: Env): McpServer {
     async (input) => ({
       content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => payoffExplorer(db, input))) }],
     }),
+  );
+  server.registerTool(
+    "preview_weekly_sessions",
+    {
+      description:
+        "Preview recurring sessions for a Monday-start week in America/Chicago, including created and skipped occurrences. Ask which sessions are off before adding the week.",
+      inputSchema: previewWeeklySessionsSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => writeResult(env, (db) => previewWeeklySessions(db, input)),
+  );
+  server.registerTool(
+    "add_weekly_sessions",
+    {
+      description:
+        "Add recurring sessions for a Monday-start week. Supply skipped pattern/date pairs after asking which are off. Skips persist and cancel existing generated events. Generate request_id once and reuse it on retries; retries return the original result.",
+      inputSchema: addWeeklySessionsSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => writeResult(env, (db) => addWeeklySessions(db, input)),
+  );
+  server.registerTool(
+    "record_weekly_pattern",
+    {
+      description:
+        "Record one weekly session pattern within an activity season, or end an existing pattern within its current window. Use one pattern per weekday. local_start is HH:MM in America/Chicago; duration_minutes is elapsed time. Ending a pattern affects future generation and does not cancel existing events. Reuse request_id on retries.",
+      inputSchema: recordWeeklyPatternSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => writeResult(env, (db) => recordWeeklyPattern(db, input)),
   );
   server.registerTool(
     "upkeep",
