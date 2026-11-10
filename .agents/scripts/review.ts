@@ -136,8 +136,13 @@ export function review(
       const stdout = execFileSync(cli, args, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
-        // The reviewer reads untrusted diffs, so it gets no GitHub token or personal-term list.
-        env: { ...process.env, GH_TOKEN: undefined, PERSONAL_TERMS: undefined },
+        // The reviewer reads untrusted diffs, so it gets only its own login: no GitHub token, personal terms or other login.
+        env: {
+          ...process.env,
+          GH_TOKEN: undefined,
+          PERSONAL_TERMS: undefined,
+          CLAUDE_CODE_OAUTH_TOKEN: reviewer === "claude" ? process.env.CLAUDE_CODE_OAUTH_TOKEN : undefined,
+        },
         maxBuffer: 16 * 1024 * 1024,
         timeout: 600_000,
       });

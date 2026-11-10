@@ -26,7 +26,7 @@ function fixture(t: TestContext, options: Record<string, string> = {}) {
   );
   script(
     "codex",
-    `if(process.env.CODEX_DOWN) process.exit(1);const a=process.argv;require('node:fs').writeFileSync(a[a.indexOf('-o')+1],JSON.stringify({summary:'Reviewed',findings:process.env.BLOCK?[{priority:0,title:'bug',file:'a.ts',line:1,body:'b'}]:[]}));`,
+    `if(process.env.CODEX_DOWN) process.exit(1);const a=process.argv;require('node:fs').writeFileSync(a[a.indexOf('-o')+1],JSON.stringify({summary:'Reviewed',findings:process.env.BLOCK?[{priority:0,title:'bug',file:'a.ts',line:1,body:'b'}]:process.env.LEAK?[{priority:2,title:'t',file:'a.ts',line:1,body:process.env.LEAK}]:[]}));`,
   );
   const result = spawnSync(process.execPath, [join(import.meta.dirname, "gate.ts")], {
     encoding: "utf8",
@@ -65,6 +65,15 @@ test("removed personal line passes and posts review receipt", (t) => {
   const { result, calls } = fixture(t, { DIFF: "-synthetic-private-marker\n+safe" });
   assert.equal(result.status, 0, result.stderr);
   assert.match(calls, /Review: pass/);
+});
+test("a review that quotes a reviewer login is withheld", (t) => {
+  const { result, calls } = fixture(t, {
+    CLAUDE_CODE_OAUTH_TOKEN: "synthetic-login-token-0123456789",
+    LEAK: "synthetic-login-token-0123456789",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(calls, /withheld by personal or credential scan/);
+  assert.doesNotMatch(calls, /synthetic-login-token/);
 });
 test("Codex out of usage hands the review to Claude", (t) => {
   const { result, calls } = fixture(t, { CODEX_DOWN: "1" });

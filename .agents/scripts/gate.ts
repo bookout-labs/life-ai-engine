@@ -2,6 +2,9 @@
 // Fails on: a path outside the engine, a personal term, a missing or closed board issue, a missing proof,
 // a blocked cross-family review, or a fourth blocked round without a Regroup comment.
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { added, agentOf, boardNumber, leaks, missing, requireOpenIssue } from "./proof.ts";
 import { blocking, MAX_ROUNDS, render, roundsSinceRegroup, review as runReview } from "./review.ts";
 
@@ -68,7 +71,15 @@ try {
 
   const { reviewer, review } = runReview(agentOf(body), base, head, `${card.title}\n${card.body}`);
   const text = render(review);
-  const safeText = leaks([text]) ? "Review details withheld by personal scan." : text;
+  // The reviewer reads untrusted diffs; if one coaxed a reviewer login into the review, never publish it.
+  const logins = [process.env.CLAUDE_CODE_OAUTH_TOKEN ?? ""];
+  try {
+    logins.push(...(readFileSync(join(homedir(), ".codex/auth.json"), "utf8").match(/[\w.-]{20,}/g) ?? []));
+  } catch {
+    // No Codex login on this runner.
+  }
+  const exposed = logins.some((login) => login.length >= 20 && text.includes(login));
+  const safeText = leaks([text]) || exposed ? "Review details withheld by personal or credential scan." : text;
   const blockers = blocking(review);
   if (blockers.length) {
     const list = blockers.map((f) => `- [P${f.priority}] Finding withheld`).join("\n");
