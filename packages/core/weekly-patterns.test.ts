@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import pg from "pg";
+import { InputError } from "./input-error.ts";
 import { schedule } from "./schedule.ts";
 import { addWeeklySessions, previewWeeklySessions, recordWeeklyPattern } from "./weekly-patterns.ts";
 
@@ -69,7 +70,13 @@ test("weekly sessions preserve local times and converge across retries", {
       assert.ok(first);
       const skipped = [{ pattern_id: first.pattern_id, local_date: first.local_date }];
       const input = { request_id: randomUUID(), week_start, skipped };
-      assert.deepEqual(await addWeeklySessions(db, input), { created: 2, skipped: 1, already_existed: false });
+      assert.deepEqual(await addWeeklySessions(db, input), {
+        week_start,
+        created: 2,
+        adopted: 0,
+        skipped: 1,
+        already_existed: false,
+      });
       assert.equal((await addWeeklySessions(db, { request_id: randomUUID(), week_start })).created, 0);
       assert.equal((await schedule(db, week_start)).length, 2);
       assert.equal((await previewWeeklySessions(db, { week_start }))[0]?.status, "skipped");
@@ -84,11 +91,7 @@ test("weekly sessions preserve local times and converge across retries", {
       const state = await previewWeeklySessions(db, { week_start });
       assert.equal(state[1]?.status, "skipped");
       assert.ok(state[1]?.event_id);
-      assert.deepEqual(await addWeeklySessions(db, { ...input, skipped: [] }), {
-        created: 2,
-        skipped: 1,
-        already_existed: true,
-      });
+      assert.equal((await addWeeklySessions(db, input)).already_existed, true);
     });
     await t.test("pattern and season ends stop occurrences midweek", async () => {
       const pattern_id = ids[2];
@@ -178,29 +181,108 @@ test("weekly sessions preserve local times and converge across retries", {
           2,
         );
         assert.equal((await schedule(pool, input.week_start)).length, 2);
+        const command = {
+          action: "record",
+          activity_id: activity,
+          weekday: 5,
+          local_start: "09:00",
+          duration_minutes: 60,
+          kind: "practice",
+          active_from: "2040-07-01",
+          active_until: "2040-07-31",
+        };
+        const patterns = await Promise.allSettled([
+          recordWeeklyPattern(pool, { request_id: randomUUID(), command }),
+          recordWeeklyPattern(pool, { request_id: randomUUID(), command }),
+        ]);
+        const accepted = patterns.find((p) => p.status === "fulfilled");
+        const rejected = patterns.find((p) => p.status === "rejected");
+        assert.ok(accepted?.status === "fulfilled");
+        assert.ok(rejected?.status === "rejected");
+        assert.ok(rejected.reason instanceof InputError);
+        assert.equal(rejected.reason.message, `Pattern overlaps existing pattern ${accepted.value.pattern.id}.`);
       } finally {
         await pool.end();
       }
     });
-    await t.test("an existing event conflict rolls back the whole request", async () => {
-      const input = { request_id: randomUUID(), week_start: "2040-08-06" };
+    await t.test("hand-entered live and cancelled events are adopted without duplicates", async () => {
+      const input = { request_id: randomUUID(), week_start: "2040-01-02" };
       const sessions = await previewWeeklySessions(db, input);
-      const occupied = sessions[1];
-      assert.ok(occupied);
-      const event = (
-        await db.query(
-          "insert into events (activity_id, kind, starts_at) values ($1, 'lesson', $2) returning id::text",
-          [activity, occupied.starts_at],
-        )
-      ).rows[0].id;
-      await assert.rejects(addWeeklySessions(db, input), /Resolve the conflict before adding sessions/);
+      for (const [index, session] of sessions.slice(0, 2).entries()) {
+        await db.query("insert into events (activity_id, kind, starts_at, cancelled) values ($1, 'lesson', $2, $3)", [
+          activity,
+          session.starts_at,
+          index === 1,
+        ]);
+      }
+      const before = await previewWeeklySessions(db, input);
       assert.deepEqual(
-        (await previewWeeklySessions(db, input)).map((s) => s.status),
-        ["pending", "pending"],
+        before.map((s) => s.status),
+        ["created", "skipped", "pending"],
       );
-      assert.equal((await schedule(db, input.week_start)).length, 1);
-      await db.query("delete from events where id = $1", [event]);
-      assert.equal((await addWeeklySessions(db, input)).created, 2);
+      assert.ok(before.slice(0, 2).every((s) => s.event_id));
+      assert.deepEqual(await addWeeklySessions(db, input), {
+        week_start: input.week_start,
+        created: 1,
+        adopted: 1,
+        skipped: 1,
+        already_existed: false,
+      });
+      assert.deepEqual((await previewWeeklySessions(db, input)).slice(0, 2), before.slice(0, 2));
+      assert.equal((await schedule(db, input.week_start)).length, 2);
+      assert.deepEqual(await addWeeklySessions(db, { ...input, request_id: randomUUID() }), {
+        week_start: input.week_start,
+        created: 0,
+        adopted: 0,
+        skipped: 0,
+        already_existed: false,
+      });
+      assert.equal((await addWeeklySessions(db, input)).already_existed, true);
+    });
+    await t.test("overlapping slots reject the duplicate and name the existing pattern", async () => {
+      const command = {
+        action: "record",
+        activity_id: activity,
+        weekday: 1,
+        local_start: "18:00",
+        duration_minutes: 30,
+        kind: "lesson",
+        active_from: "2040-12-31",
+        active_until: "2040-12-31",
+      };
+      await assert.rejects(recordWeeklyPattern(db, { request_id: randomUUID(), command }), {
+        constructor: InputError,
+        message: `Pattern overlaps existing pattern ${ids[0]}.`,
+      });
+      const next = await recordWeeklyPattern(db, {
+        request_id: randomUUID(),
+        command: { ...command, weekday: 4, active_from: "2040-05-03", active_until: "2040-06-01" },
+      });
+      assert.ok(next.pattern.id);
+    });
+    await t.test("request retries are bound to the week and skip set", async () => {
+      const input = { request_id: randomUUID(), week_start: "2040-09-03" };
+      const first = await addWeeklySessions(db, input);
+      assert.equal(first.week_start, input.week_start);
+      for (const changed of [
+        { ...input, week_start: "2040-09-10" },
+        { ...input, skipped: [{ pattern_id: ids[0], local_date: input.week_start }] },
+      ]) {
+        await assert.rejects(addWeeklySessions(db, changed), {
+          constructor: InputError,
+          message: "Request ID already used for different weekly session input.",
+        });
+      }
+      assert.equal((await schedule(db, "2040-09-10")).length, 0);
+      const sessions = await previewWeeklySessions(db, { week_start: "2040-09-17" });
+      const skipped = sessions.map((s) => ({ pattern_id: s.pattern_id, local_date: s.local_date }));
+      const skipInput = { request_id: randomUUID(), week_start: "2040-09-17", skipped };
+      await addWeeklySessions(db, skipInput);
+      assert.equal(
+        (await addWeeklySessions(db, { ...skipInput, skipped: [...skipped].reverse().concat(skipped) }))
+          .already_existed,
+        true,
+      );
     });
     await t.test("database constraints reject invalid pattern bounds", async () => {
       for (const patch of [
@@ -217,7 +299,7 @@ test("weekly sessions preserve local times and converge across retries", {
         });
       }
     });
-    await t.test("MCP returns the actionable pattern and Monday errors", async () => {
+    await t.test("MCP adopts occupied slots and rejects duplicate patterns and changed retries", async () => {
       const { registerHooks } = await import("node:module");
       const { createMcpHandler } = await import("@modelcontextprotocol/server");
       const hooks = registerHooks({
@@ -256,6 +338,61 @@ test("weekly sessions preserve local times and converge across retries", {
       const badWeek = await call("preview_weekly_sessions", { week_start: "2040-04-03" });
       assert.equal(badWeek.isError, true);
       assert.equal(badWeek.content[0].text, "Week start must be a Monday.");
+      const input = { request_id: randomUUID(), week_start: "2040-02-06" };
+      const sessions = await previewWeeklySessions(db, input);
+      for (const [index, session] of sessions.slice(0, 2).entries()) {
+        await db.query("insert into events (activity_id, kind, starts_at, cancelled) values ($1, 'lesson', $2, $3)", [
+          activity,
+          session.starts_at,
+          index === 1,
+        ]);
+      }
+      const preview = await call("preview_weekly_sessions", input);
+      assert.deepEqual(
+        JSON.parse(preview.content[0].text).map((s: { status: string }) => s.status),
+        ["created", "skipped", "pending"],
+      );
+      const added = await call("add_weekly_sessions", input);
+      assert.deepEqual(JSON.parse(added.content[0].text), {
+        week_start: input.week_start,
+        created: 1,
+        adopted: 1,
+        skipped: 1,
+        already_existed: false,
+      });
+      assert.equal((await schedule(db, input.week_start)).length, 2);
+      const rerun = await call("add_weekly_sessions", { ...input, request_id: randomUUID() });
+      assert.deepEqual(JSON.parse(rerun.content[0].text), {
+        week_start: input.week_start,
+        created: 0,
+        adopted: 0,
+        skipped: 0,
+        already_existed: false,
+      });
+      assert.equal(JSON.parse((await call("add_weekly_sessions", input)).content[0].text).already_existed, true);
+      for (const changed of [
+        { ...input, week_start: "2040-02-13" },
+        { ...input, skipped: [{ pattern_id: ids[0], local_date: input.week_start }] },
+      ]) {
+        const rejected = await call("add_weekly_sessions", changed);
+        assert.equal(rejected.isError, true);
+        assert.equal(rejected.content[0].text, "Request ID already used for different weekly session input.");
+      }
+      const duplicate = await call("record_weekly_pattern", {
+        request_id: randomUUID(),
+        command: {
+          action: "record",
+          activity_id: activity,
+          weekday: 1,
+          local_start: "18:00",
+          duration_minutes: 60,
+          kind: "practice",
+          active_from: "2040-01-01",
+          active_until: "2040-12-31",
+        },
+      });
+      assert.equal(duplicate.isError, true);
+      assert.equal(duplicate.content[0].text, `Pattern overlaps existing pattern ${ids[0]}.`);
     });
     const migration = await readFile(
       new URL("../../db/migrations/20261111030000_weekly_patterns.sql", import.meta.url),

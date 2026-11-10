@@ -242,7 +242,7 @@ export function tools(env: Env): McpServer {
     "preview_weekly_sessions",
     {
       description:
-        "Preview recurring sessions for a Monday-start week in America/Chicago, including created and skipped occurrences. Ask which sessions are off before adding the week.",
+        "Preview recurring sessions for a Monday-start week in America/Chicago, including hand-entered events as created or skipped when cancelled. Ask which sessions are off before adding the week.",
       inputSchema: previewWeeklySessionsSchema,
       annotations: { readOnlyHint: true },
     },
@@ -252,7 +252,7 @@ export function tools(env: Env): McpServer {
     "add_weekly_sessions",
     {
       description:
-        "Add recurring sessions for a Monday-start week. Supply skipped pattern/date pairs after asking which are off. Skips persist and cancel existing generated events. Generate request_id once and reuse it on retries; retries return the original result.",
+        "Add recurring sessions for a Monday-start week. Supply skipped pattern/date pairs after asking which are off. Matching hand-entered events are adopted; cancelled events stay skipped. Returns week_start and separate created, adopted and skipped counts. Skips persist and cancel linked events. Reuse request_id only with the same week and skips; changed input is rejected.",
       inputSchema: addWeeklySessionsSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
@@ -262,7 +262,7 @@ export function tools(env: Env): McpServer {
     "record_weekly_pattern",
     {
       description:
-        "Record one weekly session pattern within an activity season, or end an existing pattern within its current window. Use one pattern per weekday. local_start is HH:MM in America/Chicago; duration_minutes is elapsed time. Ending a pattern affects future generation and does not cancel existing events. Reuse request_id on retries.",
+        "Record one weekly session pattern within an activity season, or end an existing pattern within its current window. Overlapping windows for the same activity, weekday and local start are rejected with the existing pattern ID. local_start is HH:MM in America/Chicago; duration_minutes is elapsed time. Ending a pattern affects future generation and does not cancel existing events. Reuse request_id on retries.",
       inputSchema: recordWeeklyPatternSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
