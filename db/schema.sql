@@ -221,6 +221,7 @@ CREATE TABLE public.investment_buys (
     planned_condition text,
     executed_on date,
     amount numeric(14,2),
+    request_id uuid,
     CONSTRAINT investment_buys_account_ref_check CHECK ((length(TRIM(BOTH FROM account_ref)) > 0)),
     CONSTRAINT investment_buys_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT investment_buys_check CHECK (((state <> 'planned'::text) OR (((planned_on IS NOT NULL) OR (planned_condition IS NOT NULL)) AND (executed_on IS NULL)))),
@@ -506,6 +507,7 @@ CREATE TABLE public.workouts (
     performed_on date NOT NULL,
     kind text NOT NULL,
     notes text,
+    request_id uuid,
     CONSTRAINT workouts_kind_check CHECK ((length(TRIM(BOTH FROM kind)) > 0))
 );
 
@@ -629,6 +631,14 @@ ALTER TABLE ONLY public.investment_buys
 
 
 --
+-- Name: investment_buys investment_buys_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.investment_buys
+    ADD CONSTRAINT investment_buys_request_id_key UNIQUE (request_id);
+
+
+--
 -- Name: involvement involvement_member_id_activity_id_role_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -746,6 +756,14 @@ ALTER TABLE ONLY public.workout_blocks
 
 ALTER TABLE ONLY public.workouts
     ADD CONSTRAINT workouts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workouts workouts_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workouts
+    ADD CONSTRAINT workouts_request_id_key UNIQUE (request_id);
 
 
 --
@@ -893,4 +911,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261109180000'),
     ('20261110000000'),
     ('20261110120000'),
-    ('20261110150000');
+    ('20261110150000'),
+    ('20261110160000');
