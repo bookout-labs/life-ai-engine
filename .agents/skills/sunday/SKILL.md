@@ -11,7 +11,7 @@ Call the Life AI MCP tool `finance_records` for accounts and recurring monthly b
 
 Call the Life AI MCP tool `training_trend` for the last eight weeks of logged training. Show sessions per week and each flag with its reason and evidence weeks; flags are heuristics, not a diagnosis. Empty weeks mean nothing was logged, not rest.
 
-Call the Life AI MCP tool `subscriptions_check`. Show subscriptions missing this cycle, price changes, duplicate charges, `charged_after_end` and unrecorded recurring merchants, each with its evidence, and confirm them privately with the household before changing any record. Missing means no imported charge, not a cancellation; `not_linked` subscriptions need a merchant link through `link_subscription_merchant`.
+Call the Life AI MCP tool `subscriptions_check`. Show subscriptions missing this cycle, price changes, duplicate charges, `charged_after_end` and unrecorded recurring merchants, each with its evidence, and confirm them privately with the household before changing any record. Missing means no imported charge, not a cancellation; `not_linked` subscriptions need a merchant link through `link_subscription_merchant`, or, when billed through an app store or wallet, receipt charges recorded as the today procedure records them.
 
 Review active goals by area through the Life AI MCP tool `goals` and follow each plan page for progress; report an unavailable tool explicitly. When a goal is met or abandoned, mark it with `set_goal_status`.
 
