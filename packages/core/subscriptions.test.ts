@@ -7,6 +7,7 @@ const obligation = {
   name: "Synthetic plan",
   cadence: "monthly" as const,
   due_day: 31,
+  day_is_estimate: false,
   due_month: null,
   pays_from: null,
   ended_on: null,
@@ -33,8 +34,8 @@ test("monthly cycle clamps due 31 to April 30 and shows actual price and payer",
   );
   const item = report.subscriptions[0];
   assert.equal(item?.status, "charged_this_cycle");
-  assert.equal(item?.cycle_from, "2040-04-30");
-  assert.equal(item?.cycle_through, "2040-05-30");
+  assert.equal(item?.cycle_from, "2040-04-25");
+  assert.equal(item?.cycle_through, "2040-05-25");
   assert.equal(item?.last_charge?.account_ref, "fixture-card");
   assert.equal(item?.last_charge?.amount, "12.00");
   assert.equal(item?.previous_amount, "10.00");
@@ -106,13 +107,119 @@ test("monthly candidates expose evidence and exclude linked merchants and weekly
       [],
       [
         transaction("2040-03-31", "10.00", { merchant: candidate }),
-        transaction("2040-04-30", "10.51", { merchant: candidate }),
+        transaction("2040-04-30", "11.01", { merchant: candidate }),
       ],
       "2040-05-15",
     ).unrecorded_recurring_merchants,
     [],
   );
   assert.deepEqual(buildSubscriptionsCheck([], [], rows, "2040-06-15").unrecorded_recurring_merchants, []);
+});
+
+test("early postings use five days or seven estimated days with half-open clamped cycles", () => {
+  const plan = { ...obligation, due_day: 15 };
+  const rows = ["2040-09-13", "2040-10-13", "2040-11-13"].map((d) => transaction(d, "9.99"));
+  assert.equal(
+    buildSubscriptionsCheck([plan], [link], rows, "2040-11-20").subscriptions[0]?.status,
+    "charged_this_cycle",
+  );
+  for (const [estimated, start] of [
+    [false, "2040-11-10"],
+    [true, "2040-11-08"],
+  ] as const) {
+    const ob = { ...plan, day_is_estimate: estimated };
+    const item = buildSubscriptionsCheck([ob], [link], [transaction(start)], start).subscriptions[0];
+    assert.equal(item?.cycle_from, start);
+    assert.equal(item?.status, "charged_this_cycle");
+    assert.equal(
+      buildSubscriptionsCheck([ob], [link], [transaction("2040-11-07")], "2040-11-20").subscriptions[0]?.status,
+      "missing_this_cycle",
+    );
+  }
+});
+
+test("ended plans expose only eligible debits strictly after their end with evidence", () => {
+  const ob = { ...obligation, ended_on: "2040-09-30" };
+  const rows = [
+    transaction("2040-09-30"),
+    transaction("2040-10-05", "14.99"),
+    transaction("2040-11-05", "14.99"),
+    transaction("2040-11-06", "-0.50"),
+    transaction("2040-11-07", "14.99", { pending: true }),
+    transaction("2040-11-08", "14.99", { exclusion_reason: "hidden" }),
+    transaction("2040-12-05"),
+  ];
+  const report = buildSubscriptionsCheck([ob], [link], rows, "2040-11-20");
+  assert.deepEqual(report.subscriptions, []);
+  assert.deepEqual(
+    report.charged_after_end[0]?.evidence.map((r) => [r.posted_on, r.amount, r.account_ref]),
+    [
+      ["2040-10-05", "14.99", "fixture-card"],
+      ["2040-11-05", "14.99", "fixture-card"],
+    ],
+  );
+  assert.deepEqual(
+    buildSubscriptionsCheck([ob], [link], [transaction("2040-09-30")], "2040-11-20").charged_after_end,
+    [],
+  );
+});
+
+test("price compares distinct cycles and duplicate charges keep all dates", () => {
+  const rows = [transaction("2040-09-15"), transaction("2040-11-13", "12.50"), transaction("2040-11-14", "12.50")];
+  const item = buildSubscriptionsCheck([{ ...obligation, due_day: 15 }], [link], rows, "2040-11-20").subscriptions[0];
+  assert.equal(item?.previous_amount, "10.00");
+  assert.equal(item?.price_changed, true);
+  assert.deepEqual(
+    item?.duplicate_charges.map((c) => c.dates),
+    [["2040-11-13", "2040-11-14"]],
+  );
+});
+
+test("candidates collapse duplicates and tolerate adjacent price bumps and skipped months", () => {
+  for (const dates of [
+    ["2040-08-15", "2040-10-15", "2040-11-15"],
+    ["2040-09-15", "2040-10-15", "2040-10-17", "2040-11-15"],
+  ]) {
+    const rows = dates.map((date) => transaction(date, date === "2040-11-15" ? "10.60" : "10.00"));
+    assert.equal(buildSubscriptionsCheck([], [], rows, "2040-11-20").unrecorded_recurring_merchants.length, 1);
+  }
+  const rows = [transaction("2040-07-15"), transaction("2040-09-15", "11.00"), transaction("2040-11-15", "12.10")];
+  assert.equal(buildSubscriptionsCheck([], [], rows, "2041-01-24").unrecorded_recurring_merchants.length, 1);
+  assert.equal(buildSubscriptionsCheck([], [], rows, "2041-01-25").unrecorded_recurring_merchants.length, 0);
+});
+
+test("candidate gap, duplicate-window and adjacent amount thresholds are inclusive", () => {
+  const cases: [string, string[], string[], boolean][] = [
+    ["gap25", ["2040-10-21", "2040-11-15"], ["10.00", "10.00"], true],
+    ["gap24", ["2040-10-22", "2040-11-15"], ["10.00", "10.00"], false],
+    ["gap35", ["2040-10-11", "2040-11-15"], ["10.00", "10.00"], true],
+    ["gap36", ["2040-10-10", "2040-11-15"], ["10.00", "10.00"], false],
+    ["gap55", ["2040-09-21", "2040-11-15"], ["10.00", "10.00"], true],
+    ["gap54", ["2040-09-22", "2040-11-15"], ["10.00", "10.00"], false],
+    ["gap70", ["2040-09-06", "2040-11-15"], ["10.00", "10.00"], true],
+    ["gap71", ["2040-09-05", "2040-11-15"], ["10.00", "10.00"], false],
+    ["duplicate3", ["2040-10-15", "2040-10-18", "2040-11-15"], ["10.00", "10.00", "10.00"], true],
+    ["duplicate4", ["2040-10-15", "2040-10-19", "2040-11-15"], ["10.00", "10.00", "10.00"], false],
+    ["up10pct", ["2040-10-15", "2040-11-15"], ["10.00", "11.00"], true],
+    ["upOver10pct", ["2040-10-15", "2040-11-15"], ["10.00", "11.01"], false],
+    ["down10pct", ["2040-10-15", "2040-11-15"], ["10.00", "9.00"], true],
+    ["downOver10pct", ["2040-10-15", "2040-11-15"], ["10.00", "8.99"], false],
+  ];
+  for (const [label, dates, amounts, expected] of cases) {
+    const rows = dates.map((date, i) => transaction(date, amounts[i]));
+    assert.equal(
+      buildSubscriptionsCheck([], [], rows, "2040-11-20").unrecorded_recurring_merchants.length > 0,
+      expected,
+      label,
+    );
+  }
+});
+
+test("negative fractional credits never become charges or candidates", () => {
+  const rows = [transaction("2040-10-15", "-0.50"), transaction("2040-11-15", "-5.50")];
+  const report = buildSubscriptionsCheck([obligation], [link], rows, "2040-11-20");
+  assert.equal(report.subscriptions[0]?.last_charge, null);
+  assert.deepEqual(buildSubscriptionsCheck([], [], rows, "2040-11-20").unrecorded_recurring_merchants, []);
 });
 
 test("subscription tools save replayable links and return specific MCP input errors", {
@@ -188,6 +295,16 @@ test("subscription tools save replayable links and return specific MCP input err
     }
     const saved = await call("link_subscription_merchant", command);
     assert.equal(saved.isError, undefined);
+    assert.match(JSON.parse(saved.content[0].text).warning, /Synthetic merchant/);
+    assert.deepEqual(await call("link_subscription_merchant", command), saved);
+    const wrongUnlink = await call("link_subscription_merchant", {
+      ...command,
+      request_id: crypto.randomUUID(),
+      obligation_id: bill,
+      action: "unlink",
+    });
+    assert.equal(wrongUnlink.isError, true);
+    assert.equal(wrongUnlink.content[0].text, `Merchant belongs to obligation ${subscription}; nothing was unlinked.`);
     const result = await call("link_subscription_merchant", {
       ...command,
       request_id: crypto.randomUUID(),
@@ -204,10 +321,34 @@ test("subscription tools save replayable links and return specific MCP input err
     await db.query(
       "insert into transactions(source,source_id,posted_on,amount,merchant,category,account_ref,pending) values ('fixture','one','2040-04-30',12,'Synthetic second','fixture','fixture-card',false)",
     );
+    const matched = await call("link_subscription_merchant", {
+      ...command,
+      request_id: crypto.randomUUID(),
+      merchant: "Synthetic second",
+    });
+    assert.equal(JSON.parse(matched.content[0].text).warning, undefined);
+    await db.query("update obligations set ended_on = '2040-04-29' where id = $1", [subscription]);
+    const endedLink = await call("link_subscription_merchant", {
+      ...command,
+      request_id: crypto.randomUUID(),
+      merchant: "Synthetic second",
+    });
+    assert.equal(endedLink.isError, undefined);
+    const endedRead = await call("subscriptions_check", { as_of: "2040-05-15" });
+    assert.equal(JSON.parse(endedRead.content[0].text).charged_after_end[0].evidence[0].amount, "12.00");
+    await db.query("update obligations set ended_on = null where id = $1", [subscription]);
     const read = await call("subscriptions_check", { as_of: "2040-05-15" });
     const report = JSON.parse(read.content[0].text);
     assert.equal(report.subscriptions[0].status, "charged_this_cycle");
     assert.equal(report.subscriptions[0].last_charge.amount, "12.00");
+    await db.query("update obligations set due_day = 15, day_is_estimate = true where id = $1", [subscription]);
+    await db.query(
+      "insert into transactions(source,source_id,posted_on,amount,merchant,category,account_ref,pending) values ('fixture','early','2040-11-08',12,'Synthetic second','fixture','fixture-card',false)",
+    );
+    const estimatedRead = await call("subscriptions_check", { as_of: "2040-11-20" });
+    const estimatedItem = JSON.parse(estimatedRead.content[0].text).subscriptions[0];
+    assert.equal(estimatedItem.cycle_from, "2040-11-08");
+    assert.equal(estimatedItem.status, "charged_this_cycle");
     const migration = await readFile(
       new URL("../../db/migrations/20261111040000_obligation_merchants.sql", import.meta.url),
       "utf8",
