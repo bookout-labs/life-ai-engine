@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -40,6 +40,31 @@ test("Claude: automatic compaction is blocked, and the next stop asks for the ha
   assert.match(handoff.reason, /Always launch the successor.*pin it and unpin this one/s);
   assert.doesNotMatch(handoff.reason, /Leave pins unchanged/);
   assert.equal(f.send(stop), undefined, "delivered once");
+});
+
+test("Claude: the first stop past 350k asks for the handoff once, before compaction", (t) => {
+  const f = fixture(t, "claude");
+  const transcript = join(f.env.HOME, "t.jsonl");
+  const call = (input: number, isSidechain = false) =>
+    JSON.stringify({
+      type: "assistant",
+      isSidechain,
+      message: { usage: { input_tokens: 2, cache_read_input_tokens: input, cache_creation_input_tokens: 0 } },
+    });
+  writeFileSync(transcript, `${call(360_000)}\n${call(349_000)}\n${call(390_000, true)}\n`);
+  assert.equal(
+    f.send({ ...stop, transcript_path: transcript }),
+    undefined,
+    "below 350k; a subagent's size does not count",
+  );
+  assert.equal(
+    f.send({ ...stop, transcript_path: join(f.env.HOME, "missing.jsonl") }),
+    undefined,
+    "no transcript: the 400k backstop",
+  );
+  writeFileSync(transcript, `${call(349_000)}\n${call(350_000)}\n`);
+  assert.match(f.send({ ...stop, transcript_path: transcript }).reason, /handoff\.ts write handoff/);
+  assert.equal(f.send({ ...stop, transcript_path: transcript }), undefined, "delivered once");
 });
 
 test("Codex: automatic compaction runs, and that turn's stop asks for the handoff once", (t) => {

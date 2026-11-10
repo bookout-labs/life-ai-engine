@@ -1,9 +1,10 @@
 // Coordinator rotation without compaction (#145). Each agent counts its own tokens: automatic compaction fires at
-// 400k (CLAUDE_CODE_AUTO_COMPACT_WINDOW, model_auto_compact_token_limit). For an opted-in coordinator this hook
-// blocks that compaction on Claude and asks for a handoff at the next Stop, while the full context is still there.
+// 400k (CLAUDE_CODE_AUTO_COMPACT_WINDOW, model_auto_compact_token_limit). Claude asks for the handoff at the first
+// Stop past 350k, so the handoff turn ends before 400k: a blocked compaction retries before every model call (#221).
+// The 400k block stays as the backstop, so the handoff always runs with the full context.
 // Blocking wedges Codex (the next turn hits the limit again, #145), so Codex compacts once and hands off at that Stop.
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -20,6 +21,7 @@ function parseEvent(input: unknown) {
     prompt: optionalString(event.prompt),
     agent_id: event.agent_id == null ? undefined : nonempty(event.agent_id),
     trigger: optionalString(event.trigger),
+    transcript_path: event.transcript_path == null ? undefined : string(event.transcript_path),
   };
 }
 
@@ -49,6 +51,18 @@ Always launch the successor as a new top-level T3 thread, pin it and unpin this 
 Include the retiring T3 thread id and ${marker} in the successor prompt.
 Neither seat may archive the retiring thread. Post the successor's returned link,
 then stop this seat.`;
+
+// Context size is the last main-thread call's input; a missing transcript leaves the 400k backstop.
+function contextTokens(path: string | undefined): number {
+  const rows = path && existsSync(path) ? readFileSync(path, "utf8").split("\n") : [];
+  for (const line of rows.reverse().filter((row) => row.includes('"usage"'))) {
+    const row = JSON.parse(line);
+    const usage = row.message?.usage;
+    if (row.type === "assistant" && !row.isSidechain && usage)
+      return usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+  }
+  return 0;
+}
 
 function decide(input: unknown, provider: "claude" | "codex") {
   const event = parseEvent(input);
@@ -81,7 +95,9 @@ function decide(input: unknown, provider: "claude" | "codex") {
       if (provider === "claude") return { decision: "block", reason: blocked };
       return;
     }
-    const due = Boolean(db.prepare("SELECT event FROM claims WHERE event='PreCompact'").get());
+    const due =
+      Boolean(db.prepare("SELECT event FROM claims WHERE event='PreCompact'").get()) ||
+      (provider === "claude" && contextTokens(event.transcript_path) >= 350_000);
     const once = due && db.prepare("INSERT OR IGNORE INTO claims(event) VALUES ('Stop')").run().changes > 0;
     db.exec("COMMIT");
     if (once) return { decision: "block", reason: provider === "codex" ? `${codexHandoff}\n${handoff}` : handoff };

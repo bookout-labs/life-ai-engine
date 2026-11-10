@@ -91,7 +91,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "orchestrator-compaction",
-    rule: "Coordinators hand off at 400k tokens, where each agent's automatic compaction fires (CLAUDE_CODE_AUTO_COMPACT_WINDOW, model_auto_compact_token_limit). Claude's compaction is blocked, so it hands off with the full context; Codex compacts once, then hands off from its messages, the summary and the program store. Manual compaction and workers remain unaffected.",
+    rule: "Coordinators hand off at 400k tokens, where each agent's automatic compaction fires (CLAUDE_CODE_AUTO_COMPACT_WINDOW, model_auto_compact_token_limit). Claude hands off at its first stop past 350k, so the handoff ends before compaction retries, and its 400k compaction stays blocked as the backstop; Codex compacts once, then hands off from its messages, the summary and the program store. Manual compaction and workers remain unaffected.",
     trigger: "automatic coordinator compaction",
     route: {
       kind: "hook",
