@@ -279,10 +279,8 @@ export async function linkSubscriptionMerchant(db: pg.ClientBase, input: unknown
       return result;
     }
     await db.query("lock table obligation_merchants in share row exclusive mode");
-    const obligation = await db.query("select kind from obligations where id = $1 for share", [value.obligation_id]);
+    const obligation = await db.query("select id from obligations where id = $1 for share", [value.obligation_id]);
     if (!obligation.rows.length) throw new InputError(`Obligation ${value.obligation_id} not found.`);
-    if (!["subscription", "bill"].includes(obligation.rows[0].kind))
-      throw new InputError("Only subscription or bill obligations can link merchants.");
     const existing = await db.query("select obligation_id::text from obligation_merchants where merchant = $1", [
       value.merchant,
     ]);

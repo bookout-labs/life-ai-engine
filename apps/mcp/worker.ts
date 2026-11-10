@@ -171,7 +171,7 @@ export function tools(env: Env): McpServer {
     "link_subscription_merchant",
     {
       description:
-        "Link or unlink one exact transaction merchant to a subscription or bill obligation. Ended obligations may link to detect charges after cancellation. Links without an exact matching transaction save with a warning naming the merchant. Bills may link to suppress known bills from forgotten-subscription candidates. Other obligation kinds are rejected. A merchant can belong to only one obligation. Unlink rejects merchants linked elsewhere or linked nowhere. Generate request_id once per command and reuse on retries to replay the original response. Confirm the mapping privately; never infer it from a similar name.",
+        "Link or unlink one exact transaction merchant to any recorded obligation so it is not flagged as a forgotten-subscription candidate. Ended subscriptions may link to detect charges after cancellation. Links without an exact matching transaction save with a warning naming the merchant. A merchant can belong to only one obligation. Unlink rejects merchants linked elsewhere or linked nowhere. Generate request_id once per command and reuse on retries to replay the original response. Confirm the mapping privately; never infer it from a similar name.",
       inputSchema: linkSubscriptionMerchantSchema,
     },
     async (input) => writeResult(env, (db) => linkSubscriptionMerchant(db, input)),
