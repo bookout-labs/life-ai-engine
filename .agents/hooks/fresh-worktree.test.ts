@@ -63,7 +63,7 @@ test("fresh checkout hooks enforce guards and register the first prompt without 
   const guard = run("guard", { tool_input: { command: "git push" } });
   check("guard", guard, /"permissionDecision":"deny"/.test(guard.stdout));
   const lint = run("lint-edit", { tool_input: { file_path: ".agents/hooks/guard.ts" } });
-  check("lint-edit", lint, lint.status === 0 && /additionalContext/.test(lint.stdout));
+  check("lint-edit", lint, lint.status === 0 && /Run npm ci/.test(lint.stdout));
   const start = run("turn-start", { session_id: "fresh" });
   check("turn-start", start, start.status === 0 && existsSync(join(repo, ".git/turn-start-fresh")));
   writeFileSync(join(repo, "fresh.txt"), "changed during the turn");
