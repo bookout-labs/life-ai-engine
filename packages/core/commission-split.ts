@@ -1,4 +1,4 @@
-import pg from "pg";
+import type pg from "pg";
 import { z } from "zod";
 import { slugSchema } from "./pages.ts";
 
@@ -130,20 +130,14 @@ export async function recordCommissionPlan(
     const found = await db.query(`select 1 from ${table} where ${table === "loans" ? "obligation_id" : "id"} = $1`, [
       rule.destination.id,
     ]);
-    if (!found.rows.length) {
-      const error = new pg.DatabaseError("Destination not found", 0, "error");
-      error.code = "23503";
-      error.constraint = `Destination ${rule.destination.kind} not found`;
-      throw error;
-    }
+    if (!found.rows.length)
+      throw new Error(
+        `Destination ${rule.destination.kind} ${rule.destination.id} for bucket ${rule.bucket} not found`,
+      );
   }
   const page = await db.query("select slug from pages where slug = $1 and deleted_at is null", [plan.page_slug]);
-  if (!page.rows.length) {
-    const error = new pg.DatabaseError("Plan page not found", 0, "error");
-    error.code = "23503";
-    error.constraint = "Plan page not found";
-    throw error;
-  }
+  if (!page.rows.length) throw new Error(`Plan page ${plan.page_slug} not found`);
+
   const { rows } = await db.query(
     `insert into commission_plans (request_id, effective_on, page_slug, rules) values ($1, $2, $3, $4)
      on conflict (request_id) do nothing returning ${columns}`,
@@ -158,11 +152,19 @@ export async function recordCommissionPlan(
 export async function commissionSplit(db: pg.ClientBase | pg.Pool, input: z.input<typeof commissionSplitSchema>) {
   const parsed = commissionSplitSchema.parse(input);
   const { rows } = await db.query(
-    `select ${columns} from commission_plans where effective_on <= $1 order by effective_on desc, id desc limit 1`,
+    `select ${columns} from commission_plans where effective_on <= $1 order by commission_plans.effective_on desc, commission_plans.id desc limit 1`,
     [parsed.on],
   );
   const plan = rows[0] ? planSchema.parse(rows[0]) : null;
   const result = computeCommissionSplit(parsed, plan?.rules ?? []);
+  if (!plan) {
+    const next = await db.query<{ effective_on: string }>(
+      "select min(effective_on)::text as effective_on from commission_plans where effective_on > $1",
+      [parsed.on],
+    );
+    if (next.rows[0]?.effective_on)
+      result.message = `No commission split plan is effective on ${parsed.on}. Next effective date: ${next.rows[0].effective_on}.`;
+  }
   const destinations_missing: string[] = [];
   for (const rule of plan?.rules ?? []) {
     const dest = rule.destination;

@@ -37,7 +37,7 @@ const columns = `id::text, request_id::text, area, title, status, due_on::text, 
 
 export async function activeGoals(db: pg.ClientBase | pg.Pool) {
   const { rows } = await db.query(
-    `select ${columns}, exists (select 1 from pages where pages.slug = goals.page_slug and deleted_at is not null) as page_deleted from goals where status = 'active' order by area, id`,
+    `select ${columns}, exists (select 1 from pages where pages.slug = goals.page_slug and deleted_at is not null) as page_deleted from goals where status = 'active' order by area, goals.id`,
   );
   const activeGoalSchema = goalSchema.extend({ page_deleted: z.boolean() });
   const grouped = new Map<string, z.infer<typeof activeGoalSchema>[]>();

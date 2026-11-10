@@ -19,7 +19,7 @@ export async function overloadWeeks(db: pg.ClientBase | pg.Pool, from: string) {
        select 1 from events e where not e.cancelled
          and e.starts_at < (day + make_interval(hours => $4::int)) at time zone $5
          and coalesce(e.ends_at, e.starts_at + interval '1 hour') > (day + make_interval(hours => $3::int)) at time zone $5
-     ) as booked from days order by day`,
+     ) as booked from days order by days.day`,
     [from, WEEKS, EVENING_START_HOUR, EVENING_END_HOUR, TIME_ZONE],
   );
   const days = z.array(z.object({ day: z.iso.date(), booked: z.boolean() })).parse(rows);

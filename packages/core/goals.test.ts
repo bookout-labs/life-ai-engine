@@ -143,6 +143,16 @@ test("goals group active records, preserve retries and change status on a dispos
     assert.equal(pair[0]?.goal.id, pair[1]?.goal.id);
     assert.deepEqual(pair.map((r) => r.already_existed).sort(), [false, true]);
     assert.equal((await activeGoals(client))[0]?.goals.length, 2);
+    await client.query("delete from goals");
+    for (const id of [11, 2, 10])
+      await client.query(
+        "insert into goals(id, request_id, area, title, page_slug) overriding system value values ($1, $2, 'practice', 'Fixture', 'projects/fixture-plan')",
+        [id, randomUUID()],
+      );
+    assert.deepEqual(
+      (await activeGoals(client))[0]?.goals.map((goal) => goal.id),
+      ["2", "10", "11"],
+    );
   } finally {
     await client.query(`drop schema ${namespace} cascade`);
     client.release();

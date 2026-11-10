@@ -45,15 +45,15 @@ export async function weekly(db: pg.ClientBase | pg.Pool, from: string) {
   const deadlines = await deadlinesDue(db, from, 14);
   const events = await schedule(db, from, 7);
   const members = await db.query(
-    "select id::text, coalesce(goes_by, first_name) as name, species from members order by id",
+    "select id::text, coalesce(goes_by, first_name) as name, species from members order by members.id",
   );
   const relationships = await db.query(
-    "select member_id::text, related_id::text, kind from relationships order by member_id, related_id, kind",
+    "select member_id::text, related_id::text, kind from relationships order by relationships.member_id, relationships.related_id, kind",
   );
   const activities = await db.query(
     `select id::text, member_id::text, activity, season_start::text, season_end::text
       from activities where season_start < $1::date + 7 and (season_end is null or season_end >= $1::date)
-      order by member_id, season_start, id`,
+      order by activities.member_id, activities.season_start, activities.id`,
     [from],
   );
   const loans = await db.query(

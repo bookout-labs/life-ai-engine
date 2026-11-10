@@ -22,7 +22,7 @@ const targetSchema = z.object({
 export async function accounts(db: pg.ClientBase | pg.Pool) {
   const result = await db.query(
     `select id::text, institution, name, kind, subtype, scope, notes
-      from accounts order by institution, name, id`,
+      from accounts order by institution, name, accounts.id`,
   );
   return z.array(accountSchema).parse(result.rows);
 }

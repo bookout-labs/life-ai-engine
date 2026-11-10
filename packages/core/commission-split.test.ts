@@ -170,6 +170,14 @@ test("plan revisions round-trip, retry unchanged and select by date on a disposa
     assert.equal((await commissionSplit(db, { gross_cents: 101, on: "2040-01-01" })).status, "no_plan");
     const first = await recordCommissionPlan(db, input);
     assert.equal(first.already_existed, false);
+    const before = await commissionSplit(db, { gross_cents: 101, on: "2030-01-01" });
+    assert.equal(before.status, "no_plan");
+    assert.equal(before.plan, null);
+    assert.deepEqual(before.buckets, []);
+    assert.equal(
+      before.message,
+      "No commission split plan is effective on 2030-01-01. Next effective date: 2040-01-01.",
+    );
     assert.deepEqual(
       await recordCommissionPlan(db, {
         ...input,
@@ -208,15 +216,27 @@ test("plan revisions round-trip, retry unchanged and select by date on a disposa
     });
     assert.equal((await commissionSplit(db, { gross_cents: 101, on: "2040-01-01" })).plan?.id, first.plan?.id);
     assert.equal((await commissionSplit(db, { gross_cents: 101, on: "2041-01-01" })).plan?.id, future.plan?.id);
-    const latest = await recordCommissionPlan(db, { ...input, request_id: randomUUID() });
-    assert.equal((await commissionSplit(db, { gross_cents: 101, on: "2040-01-01" })).plan?.id, latest.plan?.id);
+    for (let i = 0; i < 11; i++) await recordCommissionPlan(db, { ...input, request_id: randomUUID() });
+    const latest = await recordCommissionPlan(db, {
+      ...input,
+      request_id: randomUUID(),
+      rules: [{ bucket: "Newest", kind: "fixed", amount_cents: 70 }, ...input.rules],
+    });
+    const revised = await commissionSplit(db, { gross_cents: 101, on: "2040-01-01" });
+    assert.equal(revised.plan?.id, latest.plan.id);
+    assert.deepEqual(
+      revised.buckets.map((b) => b.amount_cents),
+      [70, 25, 6, 0],
+    );
+    assert.equal(revised.total_cents, 101);
+    assert.equal((await commissionSplit(db, { gross_cents: 101, on: "2041-01-01" })).plan?.id, future.plan.id);
     await assert.rejects(
       recordCommissionPlan(db, {
         ...input,
         request_id: randomUUID(),
         rules: [{ bucket: "Missing", kind: "remainder", destination: { kind: "account", id: "9223372036854775807" } }],
       }),
-      /not found/,
+      { name: "Error", message: "Destination account 9223372036854775807 for bucket Missing not found" },
     );
     await assert.rejects(
       recordCommissionPlan(db, {
@@ -224,11 +244,11 @@ test("plan revisions round-trip, retry unchanged and select by date on a disposa
         request_id: randomUUID(),
         rules: [{ bucket: "Missing", kind: "remainder", destination: { kind: "loan", id: "9223372036854775807" } }],
       }),
-      /not found/,
+      { name: "Error", message: "Destination loan 9223372036854775807 for bucket Missing not found" },
     );
     await assert.rejects(
       recordCommissionPlan(db, { ...input, request_id: randomUUID(), page_slug: "projects/missing" }),
-      /not found/,
+      { name: "Error", message: "Plan page projects/missing not found" },
     );
     const rest = { bucket: "Rest", kind: "remainder" };
     for (const rules of [
