@@ -48,15 +48,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/hooks/turn-start.ts",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/hooks/orchestrator-rotation.ts claude",
             "timeout": 10
           }
@@ -76,15 +67,6 @@
       }
     ],
     "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/hooks/stop-check.ts",
-            "timeout": 10
-          }
-        ]
-      },
       {
         "hooks": [
           {

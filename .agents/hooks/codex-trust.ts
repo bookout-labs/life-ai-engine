@@ -4,8 +4,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { repoRoot } from "./changes.ts";
-import { readHookInput } from "./edits.ts";
+import { readHookInput, repoRoot } from "./edits.ts";
 import { array, boolean, isRecord, nonempty, record, string } from "./parse.ts";
 
 function parseHook(value: unknown) {

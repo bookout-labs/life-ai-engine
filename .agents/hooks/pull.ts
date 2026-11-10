@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { repoRoot } from "./changes.ts";
+import { repoRoot } from "./edits.ts";
 
 const repo = repoRoot(process.cwd());
 
@@ -20,7 +20,7 @@ try {
     encoding: "utf8",
     stdio: "pipe",
   }).trim();
-  notes.push(`Fetched origin/main. ${behind} commit(s) ahead of this branch; working files unchanged.`);
+  notes.push(`Fetched origin/main; it is ${behind} commit(s) ahead of this branch. Working files unchanged.`);
 } catch (err: unknown) {
   const msg = err instanceof Error ? err.message.trim().split("\n").at(-1) : String(err);
   notes.push(`git fetch FAILED: ${msg}. Tell the user before editing.`);
