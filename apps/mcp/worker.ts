@@ -290,7 +290,7 @@ export function tools(env: Env): McpServer {
     "gifts",
     {
       description:
-        "Read an occasion's USD gift list, recipient budgets, empty recipients, buyer split and totals. Planned excludes ideas; bought includes wrapped and given. Left subtracts planned and bought. Null budget means no limit recorded, not zero. Names use existing members.",
+        "Read an occasion's USD gift list, recipient budgets, recipients with no real gift yet, buyer split and totals. Planned excludes ideas; bought includes wrapped and given. Left subtracts planned and bought. Null budget means no limit recorded, not zero. Recipients may be household members or plain names. Ideas alone count as no gift.",
       inputSchema: giftsInputSchema,
       annotations: { readOnlyHint: true },
     },
@@ -302,13 +302,19 @@ export function tools(env: Env): McpServer {
     "record_gift",
     {
       description:
-        "Set up an occasion or recipient budget, add or replace a gift, or change its status. Use existing member IDs for recipients and household buyers; add a missing outside person to members first. Occasion IDs identify one occurrence. Amounts are USD decimal strings. Gift replacement supplies every field; omitted buyer/link/note clear them. Generate one request_id per command and reuse it on retries; retries return the original result without applying changes again.",
+        "Set up an occasion or recipient budget, add or replace a gift, or change its status. Use exactly one of member_id or name for a recipient. Use the returned recipient UUID for gifts, and household member IDs for buyers. Outside names never enter household members. Occasion IDs identify one occurrence. Amounts are USD decimal strings, or null for ideas without a price. Planned and later statuses require a price. Gift replacement supplies every field; omitted buyer/link/note clear them. Generate one request_id per command and reuse it on retries; retries return the original result without applying changes again.",
       inputSchema: recordGiftInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async (input) => {
       const value = writeGiftSchema.parse(input);
-      return writeResult(env, (db) => writeGift(db, value));
+      let missing = false;
+      const result = await writeResult(env, async (db) => {
+        const saved = await writeGift(db, value);
+        missing = saved === null;
+        return saved;
+      });
+      return missing ? { isError: true, content: [{ type: "text" as const, text: "Gift not found." }] } : result;
     },
   );
   return server;

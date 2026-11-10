@@ -16,9 +16,9 @@ export const giftsInputSchema = z.object({
 const command = { request_id: z.uuid() };
 const gift = {
   ...giftsInputSchema.shape,
-  recipient_id: memberId,
+  recipient_id: z.uuid(),
   idea: z.string().trim().min(1).max(500),
-  amount: money,
+  amount: money.nullable(),
   status,
   buyer_id: memberId.nullish(),
   link: z
@@ -28,7 +28,7 @@ const gift = {
     .nullish(),
   note: z.string().max(4000).nullish(),
 };
-export const writeGiftSchema = z.discriminatedUnion("action", [
+const giftCommandSchema = z.discriminatedUnion("action", [
   z.object({
     ...command,
     ...giftsInputSchema.shape,
@@ -40,23 +40,51 @@ export const writeGiftSchema = z.discriminatedUnion("action", [
     ...command,
     ...giftsInputSchema.shape,
     action: z.literal("recipient"),
-    member_id: memberId,
+    member_id: memberId.nullish(),
+    name: z.string().trim().min(1).max(200).nullish(),
     budget: money.nullable(),
   }),
   z.object({ ...command, ...gift, action: z.literal("add_gift") }),
   z.object({ ...command, ...gift, action: z.literal("update_gift"), gift_id: z.uuid() }),
   z.object({ ...command, action: z.literal("status"), gift_id: z.uuid(), status }),
 ]);
+export const writeGiftSchema = giftCommandSchema
+  .refine((value) => value?.action !== "recipient" || (value.member_id != null) !== (value.name != null), {
+    path: ["member_id"],
+    message: "Supply exactly one of member_id or name.",
+    when: () => true,
+  })
+  .refine(
+    (value) =>
+      (value.action !== "add_gift" && value.action !== "update_gift") ||
+      value.status === "idea" ||
+      value.amount !== null,
+    {
+      path: ["amount"],
+      message: "A price is required from planned onward.",
+    },
+  );
 export const recordGiftInputSchema = z.object({
   request_id: command.request_id.describe("Generate once per command and reuse on retries."),
   action: z.enum(["occasion", "recipient", "add_gift", "update_gift", "status"]).describe("Command to perform."),
   occasion_id: giftsInputSchema.shape.occasion_id.optional().describe("Required except for status."),
   title: z.string().trim().min(1).max(200).optional().describe("Occasion title; required for occasion."),
   budget: money.nullable().optional().describe("USD budget or null; required for occasion and recipient."),
-  member_id: memberId.optional().describe("Existing member ID; required for recipient."),
-  recipient_id: gift.recipient_id.optional().describe("Recipient member ID; required for add_gift and update_gift."),
+  member_id: memberId.nullish().describe("For recipient, supply exactly one of member_id or name."),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .nullish()
+    .describe("Outside recipient name; never added to household members."),
+  recipient_id: gift.recipient_id
+    .optional()
+    .describe("Recipient UUID returned by recipient or gifts; required for add_gift and update_gift."),
   idea: gift.idea.optional().describe("Gift description; required for add_gift and update_gift."),
-  amount: gift.amount.optional().describe("USD decimal string; required for add_gift and update_gift."),
+  amount: gift.amount
+    .optional()
+    .describe("USD decimal string, or null for an unpriced idea; required for add_gift and update_gift."),
   status: status.optional().describe("Required for add_gift, update_gift and status."),
   buyer_id: gift.buyer_id.describe("Household buyer member ID; omitted or null clears it on replacement."),
   link: gift.link.describe("HTTP or HTTPS gift URL; omitted or null clears it on replacement."),
@@ -93,9 +121,9 @@ export async function writeGift(db: Database, input: z.input<typeof writeGiftSch
         break;
       case "recipient":
         ({ rows } = await client.query(
-          `insert into gift_recipients (occasion_id, member_id, budget) values ($1, $2, $3)
-           on conflict (occasion_id, member_id) do update set budget = excluded.budget returning member_id::text as id`,
-          [value.occasion_id, value.member_id, value.budget],
+          `insert into gift_recipients (occasion_id, member_id, name, budget) values ($1, $2, $3, $4)
+           on conflict (occasion_id, member_id, name) do update set budget = excluded.budget returning id::text`,
+          [value.occasion_id, value.member_id ?? null, value.name ?? null, value.budget],
         ));
         break;
       case "add_gift":
@@ -135,6 +163,10 @@ export async function writeGift(db: Database, input: z.input<typeof writeGiftSch
         throw new Error(`Unknown gift command ${exhaustive}`);
       }
     }
+    if (!rows.length) {
+      await client.query("rollback");
+      return null;
+    }
     const result = resultSchema.parse(rows[0]);
     await client.query("update gift_requests set result = $2 where request_id = $1", [value.request_id, result]);
     await client.query("commit");
@@ -160,7 +192,8 @@ const summarySchema = z.object({
   totals: totalsSchema,
   recipients: z.array(
     totalsSchema.extend({
-      member_id: z.string(),
+      id: z.uuid(),
+      member_id: z.string().nullable(),
       name: z.string(),
       budget: z.string().nullable(),
       no_gift: z.boolean(),
@@ -174,7 +207,7 @@ const summarySchema = z.object({
       id: z.uuid(),
       recipient_id: z.string(),
       idea: z.string(),
-      amount: z.string(),
+      amount: z.string().nullable(),
       status,
       buyer_id: z.string().nullable(),
       link: z.string().nullable(),
@@ -192,11 +225,11 @@ export async function readGifts(db: Database, input: z.input<typeof giftsInputSc
         case when status in ('bought', 'wrapped', 'given') then amount else 0::numeric(12,2) end as bought
       from gifts where occasion_id = $1
     ), recipient_totals as (
-      select r.member_id::text, coalesce(m.goes_by, m.first_name) as name, r.budget,
+      select r.id, r.member_id::text, coalesce(r.name, m.goes_by, m.first_name) as name, r.budget,
         coalesce(sum(e.planned), 0.00) as planned, coalesce(sum(e.bought), 0.00) as bought,
-        count(e.id) = 0 as no_gift
-      from gift_recipients r join members m on m.id = r.member_id
-      left join entries e on e.recipient_id = r.member_id where r.occasion_id = $1 group by r.member_id, r.budget, m.id
+        count(e.id) filter (where e.status <> 'idea') = 0 as no_gift
+      from gift_recipients r left join members m on m.id = r.member_id
+      left join entries e on e.recipient_id = r.id where r.occasion_id = $1 group by r.id, m.id
     ), buyer_totals as (
       select e.buyer_id::text, coalesce(m.goes_by, m.first_name) as name,
         sum(e.planned)::text as planned, sum(e.bought)::text as bought
@@ -207,9 +240,9 @@ export async function readGifts(db: Database, input: z.input<typeof giftsInputSc
     select o.id, o.title, o.budget::text,
       jsonb_build_object('planned', t.planned::text, 'bought', t.bought::text,
         'left', (o.budget - t.planned - t.bought)::text, 'over_budget', coalesce(t.planned + t.bought > o.budget, false)) as totals,
-      coalesce((select jsonb_agg(jsonb_build_object('member_id', r.member_id, 'name', r.name, 'budget', r.budget::text,
+      coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'member_id', r.member_id, 'name', r.name, 'budget', r.budget::text,
         'planned', r.planned::text, 'bought', r.bought::text, 'left', (r.budget - r.planned - r.bought)::text,
-        'over_budget', coalesce(r.planned + r.bought > r.budget, false), 'no_gift', r.no_gift) order by r.member_id::bigint) from recipient_totals r), '[]') as recipients,
+        'over_budget', coalesce(r.planned + r.bought > r.budget, false), 'no_gift', r.no_gift) order by r.member_id::bigint nulls last, r.name, r.id) from recipient_totals r), '[]') as recipients,
       coalesce((select jsonb_agg(to_jsonb(b) order by b.buyer_id::bigint nulls last) from buyer_totals b), '[]') as buyers,
       coalesce((select jsonb_agg(jsonb_build_object('id', e.id, 'recipient_id', e.recipient_id::text, 'idea', e.idea,
         'amount', e.amount::text, 'status', e.status, 'buyer_id', e.buyer_id::text, 'link', e.link, 'note', e.note) order by e.id) from entries e), '[]') as gifts

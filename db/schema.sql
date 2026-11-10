@@ -227,10 +227,14 @@ CREATE TABLE public.gift_occasions (
 --
 
 CREATE TABLE public.gift_recipients (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
     occasion_id text NOT NULL,
-    member_id bigint NOT NULL,
+    member_id bigint,
     budget numeric(12,2),
-    CONSTRAINT gift_recipients_budget_check CHECK (((budget >= (0)::numeric) AND (budget <> 'NaN'::numeric)))
+    name text,
+    CONSTRAINT gift_recipients_budget_check CHECK (((budget >= (0)::numeric) AND (budget <> 'NaN'::numeric))),
+    CONSTRAINT gift_recipients_check CHECK ((num_nonnulls(member_id, name) = 1)),
+    CONSTRAINT gift_recipients_name_check CHECK ((((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 200)) AND (name = btrim(name))))
 );
 
 
@@ -251,14 +255,15 @@ CREATE TABLE public.gift_requests (
 CREATE TABLE public.gifts (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     occasion_id text NOT NULL,
-    recipient_id bigint NOT NULL,
+    recipient_id uuid NOT NULL,
     idea text NOT NULL,
-    amount numeric(12,2) NOT NULL,
+    amount numeric(12,2),
     status text NOT NULL,
     buyer_id bigint,
     link text,
     note text,
     CONSTRAINT gifts_amount_check CHECK (((amount >= (0)::numeric) AND (amount <> 'NaN'::numeric))),
+    CONSTRAINT gifts_check CHECK (((status = 'idea'::text) OR (amount IS NOT NULL))),
     CONSTRAINT gifts_idea_check CHECK (((length(btrim(idea)) >= 1) AND (length(btrim(idea)) <= 500))),
     CONSTRAINT gifts_link_check CHECK (((length(link) <= 2000) AND (link ~ '^https?://'::text))),
     CONSTRAINT gifts_note_check CHECK ((length(note) <= 4000)),
@@ -821,11 +826,27 @@ ALTER TABLE ONLY public.gift_occasions
 
 
 --
+-- Name: gift_recipients gift_recipients_occasion_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gift_recipients
+    ADD CONSTRAINT gift_recipients_occasion_id_id_key UNIQUE (occasion_id, id);
+
+
+--
+-- Name: gift_recipients gift_recipients_occasion_id_member_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gift_recipients
+    ADD CONSTRAINT gift_recipients_occasion_id_member_id_name_key UNIQUE NULLS NOT DISTINCT (occasion_id, member_id, name);
+
+
+--
 -- Name: gift_recipients gift_recipients_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.gift_recipients
-    ADD CONSTRAINT gift_recipients_pkey PRIMARY KEY (occasion_id, member_id);
+    ADD CONSTRAINT gift_recipients_pkey PRIMARY KEY (id);
 
 
 --
@@ -1154,7 +1175,7 @@ ALTER TABLE ONLY public.gifts
 --
 
 ALTER TABLE ONLY public.gifts
-    ADD CONSTRAINT gifts_occasion_id_recipient_id_fkey FOREIGN KEY (occasion_id, recipient_id) REFERENCES public.gift_recipients(occasion_id, member_id);
+    ADD CONSTRAINT gifts_occasion_id_recipient_id_fkey FOREIGN KEY (occasion_id, recipient_id) REFERENCES public.gift_recipients(occasion_id, id);
 
 
 --
@@ -1262,4 +1283,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110170000'),
     ('20261110180000'),
     ('20261110190000'),
-    ('20261110210000');
+    ('20261110210000'),
+    ('20261110220000');
