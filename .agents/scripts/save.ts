@@ -1,11 +1,11 @@
-// Saves finished work from a T3 worktree: commit, push, PR as the App, auto-merge. GitHub's gate (main's copy) judges it.
+// Saves finished work from a T3 worktree: commit, push, PR as the App, then queue it. GitHub's gate (main's copy)
+// judges it and the merge queue merges it; T3's PR watch reports back, so saving never waits.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { added, leaks, missing, requireOpenIssue } from "./proof.ts";
-import { waitForMerge } from "./save-wait.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -16,7 +16,6 @@ const { values, positionals } = parseArgs({
     proof: { type: "string" },
     issue: { type: "string" },
     regroup: { type: "string" },
-    "no-wait": { type: "boolean", default: false },
   },
 });
 function fail(why: string): never {
@@ -147,58 +146,21 @@ try {
 } catch {
   fail(`Push failed. Fetch origin, then ${update(remote)} Then save again.`);
 }
-console.log(`1/3 pushed ${branch}`);
+console.log(`1/2 pushed ${branch}`);
 
-// A failed save leaves its PR open with auto-merge on; the next save from this branch refreshes it instead of opening another.
+// A failed save leaves its PR open; the next save from this branch refreshes it instead of opening another.
+// The merge queue picks the merge method and re-tests the combined tree, so queueing is one plain call.
 const repoArgs = ["-R", "bookout-labs/life-ai-engine"];
 const lookup = ["--state", "open", "--json", "url", "--jq", ".[0].url // empty"];
 let pr = gh("pr", "list", ...repoArgs, "--head", branch, ...lookup);
-if (pr) {
-  gh("pr", "edit", pr, "--title", message, "--body", body);
-  // Auto-merge stays bound to the commit it was first armed on, so a refreshed PR never queues; re-arm it.
-  if (gh("pr", "view", pr, "--json", "autoMergeRequest", "--jq", ".autoMergeRequest != null") === "true")
-    gh("pr", "merge", pr, "--disable-auto");
-} else pr = gh("pr", "create", ...repoArgs, "--base", "main", "--head", branch, "--title", message, "--body", body);
-gh("pr", "merge", pr, "--auto", "--merge", "--match-head-commit", git("rev-parse", "HEAD"));
-console.log(`2/3 ${pr} merges when check, gate and secrets pass. Link it to this thread (link_pull_request).`);
-if (values["no-wait"]) {
-  console.log("Not waiting. Watch the PR (watch_pull_request); merged is not done until ship.yml's run passes.");
-  process.exit(0);
-}
-
+if (pr) gh("pr", "edit", pr, "--title", message, "--body", body);
+else pr = gh("pr", "create", ...repoArgs, "--base", "main", "--head", branch, "--title", message, "--body", body);
 try {
-  await waitForMerge(gh, pr);
-} catch (err) {
-  fail(err instanceof Error ? err.message : String(err));
-}
-// The queue merges with a merge commit, so this branch is its ancestor and fast-forwards onto the new main.
-try {
-  git("pull", "--ff-only", "origin", "main");
+  gh("pr", "merge", pr, "--auto");
 } catch {
-  fail(
-    `PR ${pr} is merged; local update was skipped. Run git pull --ff-only origin main after resolving local changes.`,
-  );
+  fail(`${pr} is pushed but not queued. Save again to queue it.`);
 }
-console.log(`3/3 merged ${pr}`);
-const merged = gh("pr", "view", pr, "--json", "mergeCommit", "--jq", ".mergeCommit.oid");
-const fields = ["--json", "databaseId,url", "--jq", '.[0] | select(.) | "\\(.databaseId) \\(.url)"'];
-for (let i = 0; i < 24; i++) {
-  let run = "";
-  try {
-    run = gh("run", "list", "--workflow", "ship.yml", "--commit", merged, ...fields);
-  } catch {
-    // Retry while GitHub is unavailable or the run has not appeared.
-  }
-  if (run) {
-    const [id = "", url = ""] = run.split(" ");
-    try {
-      gh("run", "watch", id, "--exit-status", "--interval", "5");
-    } catch {
-      fail(`merged, but the production check failed: ${url}. Fix it and save again.`);
-    }
-    console.log(`Production check passed: ${url}. ship.yml posts the evidence on the board issue.`);
-    process.exit(0);
-  }
-  if (i < 23) await new Promise((resolve) => setTimeout(resolve, 5000));
-}
-fail("merged, but GitHub never started the production check (ship.yml).");
+console.log(`2/2 ${pr} is queued and merges when check, gate and secrets pass.`);
+console.log(
+  "Link and watch it (link_pull_request, watch_pull_request); merged is not done until ship.yml's run passes.",
+);

@@ -1,6 +1,6 @@
 # Enforcement
 
-Save from an isolated worktree branch with `node .agents/scripts/save.ts --work LAB.1.3 -m "Change summary" --issue <number> --proof "Production observation" <paths>`. Code requires production proof. Every engine change requires an open board issue. `--no-wait` returns after auto-merge is armed; the caller then links and watches the PR in T3.
+Save from an isolated worktree branch with `node .agents/scripts/save.ts --work LAB.1.3 -m "Change summary" --issue <number> --proof "Production observation" <paths>`. Code requires production proof. Every engine change requires an open board issue. save.ts returns once the PR is queued; the caller then links and watches the PR in T3.
 
 The local save stages explicit paths, checks the allowlist and personal terms, runs npm run check, commits trailers and pushes. It creates or updates the branch PR through App installation 180008533. Failures leave the branch and PR available for retry.
 

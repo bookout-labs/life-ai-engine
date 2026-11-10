@@ -15,7 +15,7 @@ Done when every file is in the table.
 
 ## 1. Whole script
 
-Find every caller: hooks config, workflows, package.json scripts, the rules registry, other scripts and skills. Measure how often it runs and how long one run takes. For hooks, the cost per call matters most, because it is paid on every matching tool call. Ask whether the whole script can go. Open its `Weed` issue.
+Start from current main, so the run judges the script as it is now. Find every caller: hooks config, workflows, package.json scripts, the rules registry, other scripts and skills. Measure how often it runs and how long one run takes. For hooks, the cost per call matters most, because it is paid on every matching tool call. Ask whether the whole script can go. Open its `Weed` issue.
 
 Done when the issue records the callers, frequency, run time and a whole-script verdict.
 
@@ -30,7 +30,7 @@ Done when every line belongs to exactly one piece, and each piece has a line ran
 For each piece, find whether one of these already does the job:
 - T3 Code;
 - GitHub (Actions, rulesets, auto-merge, merge queue, Projects);
-- the Claude Code or Codex harness;
+- each agent's own harness or CLI (Claude, Codex, Grok): when a piece calls a model or an agent, check whether every provider can do it the same way, so one path serves them all;
 - Cloudflare;
 - Neon;
 - git itself;
@@ -79,8 +79,8 @@ Done when Joe has the redesign, its open questions, and the line counts before a
 
 ## 7. Build
 
-A weed makes the script smaller as well as better, more reliable, free of bugs and more efficient; a fix that adds machinery is not a weed. Before building, merge main and drop anything main already fixed, then write the script's scope into its rule text: what it must stop, and what is out of scope. Judge every review finding against that scope; a finding outside it is not a blocker, so bring it to Joe instead of adding code. Set the `Weed` issue's "Done means" to all of these:
-- better: it does its job for every agent and model (Claude, Codex, Grok), so any one provider can be out of usage;
+A weed makes the script smaller as well as better, more reliable, free of bugs and more efficient; a fix that adds machinery is not a weed. Before building, merge main again and drop anything main already fixed, then write the script's scope into its rule text, or into the `Weed` issue when it has no rule: what it must stop, and what is out of scope. Judge every review finding against that scope; a finding outside it is not a blocker, so bring it to Joe instead of adding code. Set the `Weed` issue's "Done means" to all of these:
+- better: it does its job for every agent and model Joe keeps in scope, so any one provider can be out of usage; a provider whose tool still fails after two tries goes to Joe instead of more debugging;
 - more reliable: it can't fail open on a missing dependency, untrusted config or crash, and each agent is shown to actually run it;
 - free of bugs: tests pass, apart from tests of deleted machinery; a live run per agent proves each blocked and allowed case; the cross-family review is clean;
 - more efficient: lines, run time and call count are all lower, with before and after numbers posted;
