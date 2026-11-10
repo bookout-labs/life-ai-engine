@@ -6,9 +6,9 @@ import pg from "pg";
 import { weekly } from "./weekly.ts";
 
 test("weekly lists use numeric member, relationship and activity order", {
-  skip: !process.env.WEEKLY_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
-  const db = new pg.Client({ connectionString: process.env.WEEKLY_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `weekly_${randomUUID().replaceAll("-", "")}`;
   try {

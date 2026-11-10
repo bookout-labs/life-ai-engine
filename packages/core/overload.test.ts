@@ -1,20 +1,17 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import pg from "pg";
 import { overloadWeeks } from "./overload.ts";
+import { temporarySchema } from "./test-schema.ts";
 import { weekly } from "./weekly.ts";
 
 test("booked evenings count once per local date across weeks and daylight saving", {
-  skip: !process.env.OVERLOAD_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new pg.Client({ connectionString: process.env.OVERLOAD_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   try {
-    await db.query("begin");
-    const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
-    await db.query(schema.replace(/^\\.*$/gm, ""));
-    await db.query("set local search_path to public");
+    await db.query(await temporarySchema());
     const member = await db.query("insert into members (first_name) values ('Sample') returning id");
     const activity = await db.query(
       "insert into activities (member_id, activity, season_start) values ($1, 'sample', '2040-01-01') returning id",
@@ -57,7 +54,6 @@ test("booked evenings count once per local date across weeks and daylight saving
     assert.deepEqual((await weekly(db, "2040-03-11")).overloadWeeks, await overloadWeeks(db, "2040-03-11"));
     assert.equal((await overloadWeeks(db, "2040-03-12"))[0]?.weekStart, "2040-03-12");
   } finally {
-    await db.query("rollback");
     await db.end();
   }
 });

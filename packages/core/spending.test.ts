@@ -145,9 +145,9 @@ test("merchant ranking is numeric, deterministic and limited to ten", () => {
 });
 
 test("disposable database imports converge, corrections replace values, invalid batches are atomic, Chicago date freezes month end", {
-  skip: !process.env.SPENDING_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
-  const db = new Client({ connectionString: process.env.SPENDING_TEST_DATABASE_URL });
+  const db = new Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `spending_${crypto.randomUUID().replaceAll("-", "")}`;
   try {
@@ -156,7 +156,7 @@ test("disposable database imports converge, corrections replace values, invalid 
     await db.query(schema.replace(/^\\.*$/gm, "").replaceAll(/\bpublic\b/g, namespace));
     await db.query(`set search_path to ${namespace}`);
     await t.test("reversed concurrent imports succeed with overlapping keys", async () => {
-      const other = new Client({ connectionString: process.env.SPENDING_TEST_DATABASE_URL });
+      const other = new Client({ connectionString: process.env.TEST_DATABASE_URL });
       await other.connect();
       await other.query(`set search_path to ${namespace}`);
       try {
@@ -295,9 +295,9 @@ test("category filters ignore surrounding whitespace and case", () => {
 });
 
 test("household spending excludes business accounts but includes unknown and unmapped accounts", {
-  skip: !process.env.SPENDING_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new Client({ connectionString: process.env.SPENDING_TEST_DATABASE_URL });
+  const db = new Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `household_${crypto.randomUUID().replaceAll("-", "")}`;
   try {

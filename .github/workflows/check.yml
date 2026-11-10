@@ -11,6 +11,18 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -36,5 +48,6 @@ jobs:
           tar xzf "gitleaks_${V}_linux_x64.tar.gz" gitleaks
       - run: npm run check
         env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
           GH_TOKEN: ${{ github.token }}
           GITLEAKS_TEST_BINARY: ${{ runner.temp }}/gitleaks-fixtures/gitleaks

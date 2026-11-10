@@ -275,7 +275,7 @@ test("negative fractional credits never become charges or candidates", () => {
 });
 
 test("subscription tools save replayable links and return specific MCP input errors", {
-  skip: !process.env.SUBSCRIPTIONS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
   const { readFile } = await import("node:fs/promises");
   const { registerHooks } = await import("node:module");
@@ -294,7 +294,7 @@ test("subscription tools save replayable links and return specific MCP input err
   });
   const { tools } = await import(new URL("../../apps/mcp/worker.ts", import.meta.url).href);
   hooks.deregister();
-  const db = new pg.Client({ connectionString: process.env.SUBSCRIPTIONS_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `subscriptions_${crypto.randomUUID().replaceAll("-", "")}`;
   try {
@@ -318,7 +318,7 @@ test("subscription tools save replayable links and return specific MCP input err
     ).rows;
     const subscription = ids[0].id;
     const bill = ids[1].id;
-    const url = new URL(process.env.SUBSCRIPTIONS_TEST_DATABASE_URL ?? "");
+    const url = new URL(process.env.TEST_DATABASE_URL ?? "");
     url.searchParams.set("options", `-c search_path=${namespace}`);
     const call = async (name: string, args: unknown) => {
       const response = await createMcpHandler(() =>
@@ -562,13 +562,13 @@ test("subscription tools save replayable links and return specific MCP input err
 });
 
 test("business charges cannot become household subscription candidates or linked payment evidence", {
-  skip: !process.env.SUBSCRIPTIONS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const { readFile } = await import("node:fs/promises");
   const { Client } = await import("pg");
   const { importSpending } = await import("./spending.ts");
   const { subscriptionsCheck, linkSubscriptionMerchant } = await import("./subscriptions.ts");
-  const db = new Client({ connectionString: process.env.SUBSCRIPTIONS_TEST_DATABASE_URL });
+  const db = new Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `household_subscriptions_${crypto.randomUUID().replaceAll("-", "")}`;
   try {

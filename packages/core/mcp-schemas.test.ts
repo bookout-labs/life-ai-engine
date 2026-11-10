@@ -86,10 +86,10 @@ test("record_gift rejects incomplete actions before database access", async () =
 });
 
 test("upkeep future date returns a validation error without a retry hint", {
-  skip: !process.env.UPKEEP_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const response = await createMcpHandler(() =>
-    tools({ HYPERDRIVE: { connectionString: process.env.UPKEEP_TEST_DATABASE_URL } } as never),
+    tools({ HYPERDRIVE: { connectionString: process.env.TEST_DATABASE_URL } } as never),
   ).fetch(
     new Request("https://synthetic.test/mcp", {
       method: "POST",

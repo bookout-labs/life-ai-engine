@@ -41,9 +41,9 @@ test("goal payloads require a complete measure, a real date and a plan slug", ()
 });
 
 test("goals group active records, preserve retries and change status on a disposable database", {
-  skip: !process.env.GOALS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new pg.Pool({ connectionString: process.env.GOALS_TEST_DATABASE_URL });
+  const db = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   const client = await db.connect();
   const namespace = `goals_test_${randomUUID().replaceAll("-", "")}`;
   try {

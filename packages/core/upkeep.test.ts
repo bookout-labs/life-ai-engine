@@ -6,10 +6,10 @@ import pg from "pg";
 import { listUpkeep, logUpkeepCompletion, upkeepDue } from "./upkeep.ts";
 
 test("upkeep derives monthly dates and preserves unknown history", {
-  skip: !process.env.UPKEEP_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date("2042-01-01T12:00:00Z") });
-  const db = new pg.Client({ connectionString: process.env.UPKEEP_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `upkeep_test_${randomUUID().replaceAll("-", "")}`;
   try {
@@ -154,7 +154,7 @@ test("upkeep derives monthly dates and preserves unknown history", {
     await t.test("concurrent retries store one completion", async () => {
       const input = { request_id: randomUUID(), task_id: task.id, completed_on: "2041-04-01" };
       const write = async () => {
-        const connection = new pg.Client({ connectionString: process.env.UPKEEP_TEST_DATABASE_URL });
+        const connection = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
         await connection.connect();
         try {
           await connection.query(`set search_path to ${namespace}`);

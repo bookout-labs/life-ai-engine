@@ -6,9 +6,9 @@ import pg from "pg";
 import { documentsCheck, recordDocument } from "./documents.ts";
 
 test("documents check tracks essential household papers through idempotent writes", {
-  skip: !process.env.DOCUMENTS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
-  const db = new pg.Client({ connectionString: process.env.DOCUMENTS_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `documents_test_${randomUUID().replaceAll("-", "")}`;
   const migration = await readFile(
@@ -232,7 +232,7 @@ test("documents check tracks essential household papers through idempotent write
         location: "Synthetic",
       } as const;
       const write = async () => {
-        const connection = new pg.Client({ connectionString: process.env.DOCUMENTS_TEST_DATABASE_URL });
+        const connection = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
         await connection.connect();
         try {
           await connection.query(`set search_path to ${namespace}`);
@@ -319,7 +319,7 @@ test("documents check tracks essential household papers through idempotent write
 });
 
 test("MCP reports the specific ownership error for a will without a member", {
-  skip: !process.env.DOCUMENTS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const { registerHooks } = await import("node:module");
   const { createMcpHandler } = await import("@modelcontextprotocol/server");
@@ -336,7 +336,7 @@ test("MCP reports the specific ownership error for a will without a member", {
   const { tools } = await import(new URL("../../apps/mcp/worker.ts", import.meta.url).href);
   hooks.deregister();
   const response = await createMcpHandler(() =>
-    tools({ HYPERDRIVE: { connectionString: process.env.DOCUMENTS_TEST_DATABASE_URL } } as never),
+    tools({ HYPERDRIVE: { connectionString: process.env.TEST_DATABASE_URL } } as never),
   ).fetch(
     new Request("https://synthetic.test/mcp", {
       method: "POST",

@@ -5,9 +5,9 @@ import pg from "pg";
 import { investmentBuys } from "./investment-buys.ts";
 
 test("investment buys enforce states and report remaining and completed rows", {
-  skip: !process.env.BUYS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new pg.Client({ connectionString: process.env.BUYS_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   try {
     const migration = await readFile(
@@ -16,7 +16,7 @@ test("investment buys enforce states and report remaining and completed rows", {
     );
     const [up, down] = migration.split("-- migrate:down");
     assert.ok(up && down);
-    await db.query(up);
+    await db.query(up.replaceAll("create table ", "create temp table "));
     assert.deepEqual(await investmentBuys(db), { planned: [], completed: [] });
     await db.query(
       `insert into investment_buys (state, symbol, account_ref, planned_on, amount) values ('planned', 'ABC', 'fixture account', '2030-01-01', 100)`,

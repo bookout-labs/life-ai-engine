@@ -5,9 +5,9 @@ import pg from "pg";
 import { accounts, budgetTargets } from "./finances.ts";
 
 test("finance records preserve account scope and monthly draft ranges", {
-  skip: !process.env.FINANCES_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new pg.Client({ connectionString: process.env.FINANCES_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   try {
     await db.query("begin");

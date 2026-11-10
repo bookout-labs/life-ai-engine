@@ -5,15 +5,15 @@ import { Client } from "pg";
 import { recentWorkouts, workoutsInRange } from "./workouts.ts";
 
 test("workouts preserve blocks and read newest sessions within inclusive dates", {
-  skip: !process.env.WORKOUT_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new Client({ connectionString: process.env.WORKOUT_TEST_DATABASE_URL });
+  const db = new Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const migration = await readFile(new URL("../../db/migrations/20261110000000_workouts.sql", import.meta.url), "utf8");
   const [up, down] = migration.split("-- migrate:down");
   assert.ok(up && down);
   try {
-    await db.query(up);
+    await db.query(up.replaceAll("create table ", "create temp table "));
     await db.query(`insert into workouts (performed_on, kind) values
       ('2040-01-01', 'strength'), ('2040-01-02', 'conditioning'), ('2040-01-03', 'mobility');
       insert into workout_blocks (workout_id, position, name, sets, reps, weight, weight_unit)

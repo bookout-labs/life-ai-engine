@@ -6,9 +6,9 @@ import pg from "pg";
 import { recordContact, searchContacts } from "./contacts.ts";
 
 test("contacts round-trip and search by name fragment", {
-  skip: !process.env.CONTACTS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
-  const db = new pg.Client({ connectionString: process.env.CONTACTS_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `contacts_${randomUUID().replaceAll("-", "")}`;
   try {
@@ -179,7 +179,7 @@ test("contacts round-trip and search by name fragment", {
       );
     });
     await t.test("concurrent retries create one contact and preserve the original result", async () => {
-      const poolUrl = new URL(process.env.CONTACTS_TEST_DATABASE_URL ?? "");
+      const poolUrl = new URL(process.env.TEST_DATABASE_URL ?? "");
       poolUrl.searchParams.set("options", `-c search_path=${namespace}`);
       const pool = new pg.Pool({ connectionString: poolUrl.toString() });
       try {
@@ -242,7 +242,7 @@ test("contacts round-trip and search by name fragment", {
         });
         const { tools } = await import(new URL("../../apps/mcp/worker.ts", import.meta.url).href);
         hooks.deregister();
-        const url = new URL(process.env.CONTACTS_TEST_DATABASE_URL ?? "");
+        const url = new URL(process.env.TEST_DATABASE_URL ?? "");
         url.searchParams.set("options", `-c search_path=${namespace}`);
         const handler = createMcpHandler(() => tools({ HYPERDRIVE: { connectionString: url.toString() } } as never));
         const call = async (arguments_: unknown) => {

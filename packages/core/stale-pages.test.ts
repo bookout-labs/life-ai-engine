@@ -93,11 +93,11 @@ test("recent and invalid dates, frontmatter, and log pages do not trigger", () =
 });
 
 test("reader includes deleted targets in its snapshot but excludes deleted pages", {
-  skip: !process.env.STALE_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const { default: pg } = await import("pg");
   const { stalePages } = await import("./stale-pages.ts");
-  const db = new pg.Client({ connectionString: process.env.STALE_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   try {
     await db.query(

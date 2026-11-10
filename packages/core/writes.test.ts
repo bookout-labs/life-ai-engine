@@ -53,10 +53,15 @@ test("write tools reject invalid payloads before accessing the database", () => 
 });
 
 test("buy and workout writes read back, converge on retries, and roll back invalid sessions", {
-  skip: !process.env.WRITES_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new pg.Pool({ connectionString: process.env.WRITES_TEST_DATABASE_URL });
+  const namespace = `writes_${randomUUID().replaceAll("-", "")}`;
+  const db = new pg.Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+    options: `-c search_path=${namespace}`,
+  });
   try {
+    await db.query(`create schema ${namespace}`);
     for (const name of [
       "20261110120000_investment_buys",
       "20261110000000_workouts",
@@ -154,7 +159,7 @@ test("buy and workout writes read back, converge on retries, and roll back inval
       await assert.rejects(logWorkout(db, { ...session, request_id: randomUUID(), blocks }));
     assert.equal((await recentWorkouts(db, 10)).length, 3);
   } finally {
-    await db.query("drop table if exists workout_blocks, workouts, investment_buys");
+    await db.query(`drop schema if exists ${namespace} cascade`);
     await db.end();
   }
 });

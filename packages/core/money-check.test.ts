@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildMoneyCheck, type MoneyCharge, type MoneyObligation, readMoneyCheck } from "./money-check.ts";
+import { temporarySchema } from "./test-schema.ts";
 
 const obligation: MoneyObligation = {
   id: "1",
@@ -118,23 +119,15 @@ test("overdue includes day 60, counts older unpaid separately, and ignores paid 
 });
 
 test("database bills and money check agree, and today carries only the money summary", {
-  skip: !process.env.MONEY_CHECK_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const { Client } = await import("pg");
-  const { readFile } = await import("node:fs/promises");
   const { readToday } = await import("./today.ts");
   const { billsDue } = await import("./bills.ts");
-  const db = new Client({ connectionString: process.env.MONEY_CHECK_TEST_DATABASE_URL });
+  const db = new Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   try {
-    const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
-    await db.query(
-      schema
-        .replace(/^\\.*$/gm, "")
-        .replaceAll("CREATE TABLE public.", "CREATE TEMP TABLE public.")
-        .replaceAll("public.", "pg_temp."),
-    );
-    await db.query("set search_path to public");
+    await db.query(await temporarySchema());
     await db.query(`insert into obligations (name, kind, cadence, due_day, day_is_estimate)
       values ('Synthetic off-day', 'bill', 'monthly', 12, true);
       insert into charges (obligation_id, due_on, amount) values (1, '2041-01-11', 80.00);`);

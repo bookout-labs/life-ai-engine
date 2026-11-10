@@ -166,16 +166,16 @@ test("input boundary rejects invalid dates and unbounded ranges", () => {
 });
 
 test("wrapper reads inclusive dates and blocks from PostgreSQL without writing", {
-  skip: !process.env.TRAINING_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const db = new Client({ connectionString: process.env.TRAINING_TEST_DATABASE_URL });
+  const db = new Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const migration = await readFile(new URL("../../db/migrations/20261110000000_workouts.sql", import.meta.url), "utf8");
   const [up, down] = migration.split("-- migrate:down");
   assert.ok(up && down);
   let migrated = false;
   try {
-    await db.query(up);
+    await db.query(up.replaceAll("create table ", "create temp table "));
     migrated = true;
     await db.query(`insert into workouts (performed_on, kind) values
       ('2040-01-01', 'strength'), ('2040-01-02', 'strength'), ('2040-01-08', 'conditioning'), ('2040-01-09', 'strength');

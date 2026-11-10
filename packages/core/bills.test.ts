@@ -1,19 +1,16 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import pg from "pg";
 import { billsDue } from "./bills.ts";
+import { temporarySchema } from "./test-schema.ts";
 
 test("recorded charges own monthly and yearly billing cycles", {
-  skip: !process.env.BILLS_TEST_DATABASE_URL,
+  skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
-  const db = new pg.Client({ connectionString: process.env.BILLS_TEST_DATABASE_URL });
+  const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   try {
-    await db.query("begin");
-    const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
-    await db.query(schema.replace(/^\\.*$/gm, ""));
-    await db.query("set local search_path to public");
+    await db.query(await temporarySchema());
     for (const scenario of [
       {
         name: "two paid April charges claim distinct April and May cycles",
@@ -357,7 +354,6 @@ test("recorded charges own monthly and yearly billing cycles", {
       });
     }
   } finally {
-    await db.query("rollback");
     await db.end();
   }
 });
