@@ -1022,6 +1022,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110120000'),
     ('20261110150000'),
     ('20261110160000'),
-    ('20261110170000');
-
-INSERT INTO public.schema_migrations (version) VALUES ('20261110' || '180000');
+    ('20261110170000'),
+    ('20261110180000');
