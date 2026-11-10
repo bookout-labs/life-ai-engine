@@ -4,7 +4,7 @@ Save from an isolated worktree branch with `node .agents/scripts/save.ts --work 
 
 The local save stages explicit paths, checks the allowlist and personal terms, runs npm run check, commits trailers and pushes. It creates or updates the branch PR through App installation 180008533. Failures leave the branch and PR available for retry.
 
-Run `node .agents/scripts/worktree-sweep.ts` to list merged, clean T3 worktrees idle for 48 hours, ignoring regenerable output but protecting ignored secret files; `--remove` opts into removal after process-safety checks.
+T3 Code's worktree cleanup (Settings → Worktrees → Cleanup) removes merged and idle worktrees. It skips a worktree whose HEAD is detached.
 
 ## CI walls
 
