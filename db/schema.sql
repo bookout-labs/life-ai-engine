@@ -209,6 +209,64 @@ CREATE TABLE public.files (
 
 
 --
+-- Name: gift_occasions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gift_occasions (
+    id text NOT NULL,
+    title text NOT NULL,
+    budget numeric(12,2),
+    CONSTRAINT gift_occasions_budget_check CHECK (((budget >= (0)::numeric) AND (budget <> 'NaN'::numeric))),
+    CONSTRAINT gift_occasions_id_check CHECK ((id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'::text)),
+    CONSTRAINT gift_occasions_title_check CHECK (((length(btrim(title)) >= 1) AND (length(btrim(title)) <= 200)))
+);
+
+
+--
+-- Name: gift_recipients; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gift_recipients (
+    occasion_id text NOT NULL,
+    member_id bigint NOT NULL,
+    budget numeric(12,2),
+    CONSTRAINT gift_recipients_budget_check CHECK (((budget >= (0)::numeric) AND (budget <> 'NaN'::numeric)))
+);
+
+
+--
+-- Name: gift_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gift_requests (
+    request_id uuid NOT NULL,
+    result jsonb NOT NULL
+);
+
+
+--
+-- Name: gifts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gifts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    occasion_id text NOT NULL,
+    recipient_id bigint NOT NULL,
+    idea text NOT NULL,
+    amount numeric(12,2) NOT NULL,
+    status text NOT NULL,
+    buyer_id bigint,
+    link text,
+    note text,
+    CONSTRAINT gifts_amount_check CHECK (((amount >= (0)::numeric) AND (amount <> 'NaN'::numeric))),
+    CONSTRAINT gifts_idea_check CHECK (((length(btrim(idea)) >= 1) AND (length(btrim(idea)) <= 500))),
+    CONSTRAINT gifts_link_check CHECK (((length(link) <= 2000) AND (link ~ '^https?://'::text))),
+    CONSTRAINT gifts_note_check CHECK ((length(note) <= 4000)),
+    CONSTRAINT gifts_status_check CHECK ((status = ANY (ARRAY['idea'::text, 'planned'::text, 'bought'::text, 'wrapped'::text, 'given'::text])))
+);
+
+
+--
 -- Name: goals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -755,6 +813,38 @@ ALTER TABLE ONLY public.files
 
 
 --
+-- Name: gift_occasions gift_occasions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gift_occasions
+    ADD CONSTRAINT gift_occasions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: gift_recipients gift_recipients_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gift_recipients
+    ADD CONSTRAINT gift_recipients_pkey PRIMARY KEY (occasion_id, member_id);
+
+
+--
+-- Name: gift_requests gift_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gift_requests
+    ADD CONSTRAINT gift_requests_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: gifts gifts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gifts
+    ADD CONSTRAINT gifts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: goals goals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -947,6 +1037,13 @@ ALTER TABLE ONLY public.workouts
 
 
 --
+-- Name: gifts_occasion_recipient; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX gifts_occasion_recipient ON public.gifts USING btree (occasion_id, recipient_id);
+
+
+--
 -- Name: goals_active_area_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1026,6 +1123,38 @@ ALTER TABLE ONLY public.events
 
 ALTER TABLE ONLY public.files
     ADD CONSTRAINT files_source_page_id_fkey FOREIGN KEY (source_page_id) REFERENCES public.pages(id);
+
+
+--
+-- Name: gift_recipients gift_recipients_member_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gift_recipients
+    ADD CONSTRAINT gift_recipients_member_id_fkey FOREIGN KEY (member_id) REFERENCES public.members(id);
+
+
+--
+-- Name: gift_recipients gift_recipients_occasion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gift_recipients
+    ADD CONSTRAINT gift_recipients_occasion_id_fkey FOREIGN KEY (occasion_id) REFERENCES public.gift_occasions(id);
+
+
+--
+-- Name: gifts gifts_buyer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gifts
+    ADD CONSTRAINT gifts_buyer_id_fkey FOREIGN KEY (buyer_id) REFERENCES public.members(id);
+
+
+--
+-- Name: gifts gifts_occasion_id_recipient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gifts
+    ADD CONSTRAINT gifts_occasion_id_recipient_id_fkey FOREIGN KEY (occasion_id, recipient_id) REFERENCES public.gift_recipients(occasion_id, member_id);
 
 
 --
@@ -1132,4 +1261,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110160000'),
     ('20261110170000'),
     ('20261110180000'),
-    ('20261110190000');
+    ('20261110190000'),
+    ('20261110210000');
