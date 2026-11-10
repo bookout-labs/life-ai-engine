@@ -123,7 +123,10 @@ await test("mentions in comments, echo commands and unrelated npm scripts are no
 
 await test("a tool-event hook must list the tools it fires on", (t) => {
   const bare = { ...hook, route: { ...hook.route, tools: { claude: [], codex: [] } } } as Rule;
-  assert.match(validate(fixture(t, [bare]), "A map.", [bare]).join("\n"), /PreToolUse route must list claude tools/);
+  assert.match(validate(fixture(t, [bare]), "A map.", [bare]).join("\n"), /PreToolUse route must list tools/);
+  const native = { ...hook, route: { ...hook.route, tools: { claude: [], codex: ["Bash"] } } } as Rule;
+  const errors = validate(fixture(t, [native]), "A map.", [native]).join("\n");
+  assert.doesNotMatch(errors, /settings\.json/, "an agent with no tools listed is not checked");
 });
 
 await test("a hook command elsewhere on disk doesn't wire the repo's route", (t) => {

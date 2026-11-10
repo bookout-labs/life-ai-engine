@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { isBlocked } from "./guard.ts";
 
@@ -25,6 +26,8 @@ await test("allows reads, save.ts, and commands that only mention git push", () 
   }
 });
 
-await test("allows Claude's practice runs in its scratchpad", () => {
-  assert.equal(isBlocked("cd /private/tmp/x/scratchpad/branch-lab && git commit -m y"), false);
+await test("Claude denies the same saves natively", () => {
+  const deny: string[] = JSON.parse(readFileSync(".claude/settings.json", "utf8")).permissions.deny;
+  for (const rule of ["Bash(git commit:*)", "Bash(git push:*)", "Bash(gh pr merge:*)"])
+    assert.ok(deny.includes(rule), rule);
 });

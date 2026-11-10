@@ -77,10 +77,14 @@ export function validate(repo: string, map: string, rules: Rule[]): string[] {
       errors.push(`${rule.id}: untested route ${rule.route.file} (needs a .test.ts beside it under .agents/)`);
     if (rule.route.kind === "hook") {
       const { event, tools } = rule.route;
+      if (/ToolUse$/.test(event) && !tools.claude.length && !tools.codex.length)
+        errors.push(`${rule.id}: ${event} route must list tools`);
       for (const [agent, config] of [
         ["claude", ".claude/settings.json"],
         ["codex", ".codex/hooks.json"],
       ] as const) {
+        // A tool hook that lists no tools for an agent leaves that agent to enforce the rule natively.
+        if (/ToolUse$/.test(event) && !tools[agent].length) continue;
         const groups = (
           hooksSchema.parse(JSON.parse(readFileSync(join(repo, config), "utf8"))).hooks[event] ?? []
         ).filter((group) =>
@@ -90,8 +94,6 @@ export function validate(repo: string, map: string, rules: Rule[]): string[] {
           ),
         );
         if (!groups.length) errors.push(`${rule.id}: ${event} not wired in ${config}`);
-        if (/ToolUse$/.test(event) && !tools[agent].length)
-          errors.push(`${rule.id}: ${event} route must list ${agent} tools`);
         for (const tool of tools[agent])
           if (!groups.some((group) => !group.matcher || new RegExp(`^(?:${group.matcher})$`).test(tool)))
             errors.push(`${rule.id}: ${config} matcher never fires on ${tool}`);

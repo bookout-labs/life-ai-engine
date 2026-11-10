@@ -46,13 +46,13 @@ export const RULES: Rule[] = [
   },
   {
     id: "save",
-    rule: "Raw git commit, git push and gh pr merge are blocked; save.ts owns saving.",
+    rule: "Raw git commit, git push and gh pr merge are blocked; save.ts owns saving. If save.ts fails partway, stop and ask the user. Claude blocks them natively with permissions.deny in .claude/settings.json; Codex through this hook. GitHub's protect-main ruleset and the gate are the wall.",
     trigger: "shell save",
     route: {
       kind: "hook",
       file: ".agents/hooks/guard.ts",
       event: "PreToolUse",
-      tools: { claude: ["Bash"], codex: ["Bash"] },
+      tools: { claude: [], codex: ["Bash"] },
     },
   },
   {
