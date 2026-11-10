@@ -14,6 +14,12 @@ import pg from "pg";
 import * as z from "zod";
 import { payoffExplorer, payoffInputSchema } from "../../packages/core/amortize.ts";
 import { billsDue, deadlinesDue } from "../../packages/core/bills.ts";
+import {
+  commissionSplit,
+  commissionSplitSchema,
+  recordCommissionPlan,
+  recordCommissionPlanSchema,
+} from "../../packages/core/commission-split.ts";
 import { accounts, budgetTargets } from "../../packages/core/finances.ts";
 import {
   giftsInputSchema,
@@ -212,6 +218,28 @@ export function tools(env: Env): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async (input) => writeResult(env, (db) => logUpkeepCompletion(db, input)),
+  );
+  server.registerTool(
+    "commission_split",
+    {
+      description:
+        "Suggest an ordered split of gross_cents using the latest plan effective on the supplied date. Amounts are exact integer cents. Fill buckets require balances supplied for that date. No transfers are made. An incomplete plan or missing balance returns no allocations. Missing destinations are flagged.",
+      inputSchema: commissionSplitSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => commissionSplit(db, input))) }],
+    }),
+  );
+  server.registerTool(
+    "record_commission_plan",
+    {
+      description:
+        "Record a complete commission split plan revision linked to its source page. Rules execute in order, capped by remaining gross. Percents use basis points of original gross. Exactly one final remainder is required. Fill targets and caps use integer cents. Destinations use account or loan ids. Generate request_id once and reuse on retries; the original revision is returned. Later effective dates win, then the newest revision on that date. Confirm household choices from the source page before recording; do not infer rates or targets.",
+      inputSchema: recordCommissionPlanSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => writeResult(env, (db) => recordCommissionPlan(db, input)),
   );
   server.registerTool(
     "goals",

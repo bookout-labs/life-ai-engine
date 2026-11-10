@@ -15,6 +15,62 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+--
+-- Name: commission_rules_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.commission_rules_valid(rules jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+declare
+  rule jsonb;
+  field text;
+  names text[] := '{}';
+  percent_total integer := 0;
+  remainders integer := 0;
+begin
+  if jsonb_typeof(rules) <> 'array' or jsonb_array_length(rules) not between 1 and 50 then return false; end if;
+  for rule in select value from jsonb_array_elements(rules) loop
+    if jsonb_typeof(rule) <> 'object' or not (rule ?& array['kind', 'bucket']) then return false; end if;
+    if jsonb_typeof(rule->'bucket') <> 'string' or length(rule->>'bucket') not between 1 and 120
+       or rule->>'bucket' <> btrim(rule->>'bucket') or rule->>'bucket' !~ '\S'
+       or rule->>'bucket' = any(names) then return false; end if;
+    names := array_append(names, rule->>'bucket');
+    if rule ? 'destination' then
+      if jsonb_typeof(rule->'destination') <> 'object'
+         or not ((rule->'destination') ?& array['kind', 'id'])
+         or jsonb_typeof(rule->'destination'->'kind') <> 'string'
+         or rule->'destination'->>'kind' not in ('account', 'loan')
+         or jsonb_typeof(rule->'destination'->'id') <> 'string'
+         or rule->'destination'->>'id' !~ '^[1-9][0-9]{0,18}$'
+         or (rule->'destination'->>'id')::numeric > 9223372036854775807
+         or (rule->'destination') - array['kind', 'id'] <> '{}'::jsonb then return false; end if;
+    end if;
+    if rule->>'kind' = 'percent' then
+      if not (rule ? 'basis_points') then return false; end if;
+      if jsonb_typeof(rule->'basis_points') <> 'number' or rule->>'basis_points' !~ '^[0-9]+$'
+         or (rule->>'basis_points')::numeric > 10000 then return false; end if;
+      percent_total := percent_total + (rule->>'basis_points')::integer;
+      if rule - array['kind','bucket','destination','basis_points'] <> '{}'::jsonb then return false; end if;
+    elsif rule->>'kind' in ('fixed', 'fill') then
+      foreach field in array case when rule->>'kind' = 'fixed' then array['amount_cents'] else array['target_cents', 'cap_cents'] end loop
+        if not (rule ? field) or jsonb_typeof(rule->field) <> 'number' or rule->>field !~ '^[0-9]+$'
+           or (rule->>field)::numeric > 9000000000000 then return false; end if;
+      end loop;
+      if rule->>'kind' = 'fixed' and rule - array['kind','bucket','destination','amount_cents'] <> '{}'::jsonb then return false; end if;
+      if rule->>'kind' = 'fill' and rule - array['kind','bucket','destination','target_cents','cap_cents'] <> '{}'::jsonb then return false; end if;
+    elsif rule->>'kind' = 'remainder' then
+      remainders := remainders + 1;
+      if rule - array['kind','bucket','destination'] <> '{}'::jsonb then return false; end if;
+    else return false;
+    end if;
+  end loop;
+  return percent_total <= 10000 and remainders = 1 and rules->-1->>'kind' = 'remainder';
+exception when others then return false;
+end;
+$_$;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -122,6 +178,35 @@ CREATE TABLE public.charges (
 
 ALTER TABLE public.charges ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME public.charges_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: commission_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.commission_plans (
+    id bigint NOT NULL,
+    request_id uuid NOT NULL,
+    effective_on date NOT NULL,
+    page_slug text NOT NULL,
+    rules jsonb NOT NULL,
+    CONSTRAINT commission_plans_effective_on_check CHECK ((isfinite(effective_on) AND ((effective_on >= '0001-01-01'::date) AND (effective_on <= '9999-12-31'::date)))),
+    CONSTRAINT commission_plans_rules_check CHECK (public.commission_rules_valid(rules))
+);
+
+
+--
+-- Name: commission_plans_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.commission_plans ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.commission_plans_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -786,6 +871,22 @@ ALTER TABLE ONLY public.charges
 
 
 --
+-- Name: commission_plans commission_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commission_plans
+    ADD CONSTRAINT commission_plans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: commission_plans commission_plans_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commission_plans
+    ADD CONSTRAINT commission_plans_request_id_key UNIQUE (request_id);
+
+
+--
 -- Name: deadlines deadlines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1058,6 +1159,13 @@ ALTER TABLE ONLY public.workouts
 
 
 --
+-- Name: commission_plans_effective; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX commission_plans_effective ON public.commission_plans USING btree (effective_on DESC, id DESC);
+
+
+--
 -- Name: gifts_occasion_recipient; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1120,6 +1228,14 @@ ALTER TABLE ONLY public.activities
 
 ALTER TABLE ONLY public.charges
     ADD CONSTRAINT charges_obligation_id_fkey FOREIGN KEY (obligation_id) REFERENCES public.obligations(id);
+
+
+--
+-- Name: commission_plans commission_plans_page_slug_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commission_plans
+    ADD CONSTRAINT commission_plans_page_slug_fkey FOREIGN KEY (page_slug) REFERENCES public.pages(slug);
 
 
 --
@@ -1283,5 +1399,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110170000'),
     ('20261110180000'),
     ('20261110190000'),
+    ('20261110200000'),
     ('20261110210000'),
     ('20261110220000');
