@@ -56,6 +56,12 @@ import { recordInvestmentBuy, recordInvestmentBuySchema } from "../../packages/c
 import { schedule, today } from "../../packages/core/schedule.ts";
 import { importSpending, readSpending, spendingInputSchema } from "../../packages/core/spending.ts";
 import { fromConnector, importTransactionsSchema } from "../../packages/core/spending-import.ts";
+import {
+  linkSubscriptionMerchant,
+  linkSubscriptionMerchantSchema,
+  subscriptionsCheck,
+  subscriptionsCheckSchema,
+} from "../../packages/core/subscriptions.ts";
 import { trainingTrend, trainingTrendSchema } from "../../packages/core/training-trend.ts";
 import { listUpkeep, logUpkeepCompletion, logUpkeepCompletionSchema } from "../../packages/core/upkeep.ts";
 import {
@@ -148,6 +154,27 @@ export function tools(env: Env): McpServer {
     async ({ from = today() }) => ({
       content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => readMoneyCheck(db, from))) }],
     }),
+  );
+  server.registerTool(
+    "subscriptions_check",
+    {
+      description:
+        "Compare active subscription obligations to exact linked transaction merchants through as_of, default today in America/Chicago. Shows actual last debit and payer, previous price, expected cycles, missing and unlinked subscriptions, yearly uncertainty and monthly unrecorded merchant candidates with evidence. Imported history only; confirm flags privately before updating the inventory.",
+      inputSchema: subscriptionsCheckSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => subscriptionsCheck(db, input))) }],
+    }),
+  );
+  server.registerTool(
+    "link_subscription_merchant",
+    {
+      description:
+        "Link or unlink one exact transaction merchant to a subscription or bill obligation. Bills may link to suppress known bills from forgotten-subscription candidates. Other obligation kinds are rejected. A merchant can belong to only one obligation. Generate request_id once per command and reuse on retries to replay the original response. Confirm the mapping privately; never infer it from a similar name.",
+      inputSchema: linkSubscriptionMerchantSchema,
+    },
+    async (input) => writeResult(env, (db) => linkSubscriptionMerchant(db, input)),
   );
   server.registerTool(
     "spending",

@@ -597,6 +597,28 @@ ALTER TABLE public.members ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 
 
 --
+-- Name: obligation_merchant_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.obligation_merchant_requests (
+    request_id uuid NOT NULL,
+    result jsonb NOT NULL,
+    CONSTRAINT obligation_merchant_requests_result_check CHECK ((jsonb_typeof(result) = 'object'::text))
+);
+
+
+--
+-- Name: obligation_merchants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.obligation_merchants (
+    merchant text NOT NULL,
+    obligation_id bigint NOT NULL,
+    CONSTRAINT obligation_merchants_merchant_check CHECK (((merchant = btrim(merchant)) AND ((length(merchant) >= 1) AND (length(merchant) <= 1000))))
+);
+
+
+--
 -- Name: obligations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1229,6 +1251,22 @@ ALTER TABLE ONLY public.members
 
 
 --
+-- Name: obligation_merchant_requests obligation_merchant_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.obligation_merchant_requests
+    ADD CONSTRAINT obligation_merchant_requests_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: obligation_merchants obligation_merchants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.obligation_merchants
+    ADD CONSTRAINT obligation_merchants_pkey PRIMARY KEY (merchant);
+
+
+--
 -- Name: obligations obligations_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1413,6 +1451,13 @@ CREATE INDEX gifts_occasion_recipient ON public.gifts USING btree (occasion_id, 
 --
 
 CREATE INDEX goals_active_area_idx ON public.goals USING btree (area, id) WHERE (status = 'active'::text);
+
+
+--
+-- Name: obligation_merchants_obligation_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX obligation_merchants_obligation_id_idx ON public.obligation_merchants USING btree (obligation_id);
 
 
 --
@@ -1611,6 +1656,14 @@ ALTER TABLE ONLY public.loans
 
 
 --
+-- Name: obligation_merchants obligation_merchants_obligation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.obligation_merchants
+    ADD CONSTRAINT obligation_merchants_obligation_id_fkey FOREIGN KEY (obligation_id) REFERENCES public.obligations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: page_revisions page_revisions_page_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1705,4 +1758,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110230000'),
     ('20261111010000'),
     ('20261111020000'),
-    ('20261111030000');
+    ('20261111030000'),
+    ('20261111040000');
