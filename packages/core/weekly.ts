@@ -2,6 +2,7 @@ import type pg from "pg";
 import { z } from "zod";
 import { billsDue, deadlinesDue } from "./bills.ts";
 import { schedule } from "./schedule.ts";
+import { upkeepDue } from "./upkeep.ts";
 
 export function weeklyWindow(from: string) {
   z.iso.date().parse(from);
@@ -73,6 +74,7 @@ export async function weekly(db: pg.ClientBase | pg.Pool, from: string) {
     window,
     bills,
     deadlines,
+    upkeep: await upkeepDue(db, from, 7),
     events,
     members: z.array(memberSchema).parse(members.rows),
     relationships: z.array(relationshipSchema).parse(relationships.rows),

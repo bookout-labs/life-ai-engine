@@ -31,6 +31,7 @@ import { schedule, today } from "../../packages/core/schedule.ts";
 import { importSpending, readSpending, spendingInputSchema } from "../../packages/core/spending.ts";
 import { fromConnector, importTransactionsSchema } from "../../packages/core/spending-import.ts";
 import { trainingTrend, trainingTrendSchema } from "../../packages/core/training-trend.ts";
+import { listUpkeep, logUpkeepCompletion, logUpkeepCompletionSchema } from "../../packages/core/upkeep.ts";
 import { publicOrigin } from "./origin.ts";
 
 const ORIGIN = publicOrigin(
@@ -182,6 +183,28 @@ function tools(env: Env): McpServer {
     async (input) => ({
       content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => payoffExplorer(db, input))) }],
     }),
+  );
+  server.registerTool(
+    "upkeep",
+    {
+      description:
+        "List home and vehicle upkeep with schedules, latest completion and next due date, oldest due first. No history means no_record and a null next date. Monthly intervals clamp to month end. A yearly completion satisfies its calendar year; the next due date is in the following year. Missed dates remain overdue. from defaults to today in America/Chicago.",
+      inputSchema: z.object({ from: z.iso.date().optional() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ from = today() }) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => listUpkeep(db, from))) }],
+    }),
+  );
+  server.registerTool(
+    "log_upkeep_completion",
+    {
+      description:
+        "Log a completed upkeep task using its id from upkeep and a local completed_on date. Generate request_id once per completion and reuse it on every retry. A reused ID returns the original completion without updating it. Next due derives from the latest completion, not log order.",
+      inputSchema: logUpkeepCompletionSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => writeResult(env, (db) => logUpkeepCompletion(db, input)),
   );
   server.registerTool(
     "goals",
