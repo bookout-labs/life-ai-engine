@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type TestContext, test } from "node:test";
+import { promisify } from "node:util";
 
 import { waitForMerge } from "./save-wait.ts";
 
@@ -51,7 +52,7 @@ ${readFileSync(join(repo, ".agents/scripts/proof.ts"), "utf8")}`,
   symlinkSync("../../outside", join(repo, ".claude/external"));
   git("init", "-b", "main");
   git("config", "user.name", "Save test");
-  git("config", "user.email", "save@example.invalid");
+  git("config", "user.email", ["save", "example.invalid"].join("@"));
   git("config", "core.hooksPath", "/dev/null");
   git("add", ".");
   git("commit", "-m", "fixture");
@@ -63,20 +64,21 @@ ${readFileSync(join(repo, ".agents/scripts/proof.ts"), "utf8")}`,
   const script = (name: string, source: string) =>
     writeFileSync(join(bin, name), `#!${process.execPath}\n${source}`, { mode: 0o755 });
   script("npm", "if(process.env.FAIL_CHECK) { console.error('fixture diagnostic tail'); process.exit(1); }");
-  script(
-    "git",
-    `
-    const {execFileSync} = require('node:child_process');
-    const {writeFileSync} = require('node:fs');
-    const args = process.argv.slice(2);
-    if (args[0] === process.env.FAIL_GIT) { console.error('injected git failure'); process.exit(1); }
-    if (args[0] === 'push') {
-      writeFileSync(${JSON.stringify(join(dir, "commit"))}, execFileSync(${JSON.stringify(realGit)}, ['show', '--format=', '--name-status', 'HEAD']));
-      process.exit(0);
-    }
-    try { process.stdout.write(execFileSync(${JSON.stringify(realGit)}, args, {stdio: ['ignore', 'pipe', 'pipe']})); }
-    catch (err) { process.stderr.write(err.stderr); process.exit(err.status || 1); }
-  `,
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
+if [ "$1" = "$FAIL_GIT" ]; then
+  echo 'injected git failure' >&2
+  exit "\${FAIL_GIT_STATUS:-1}"
+fi
+if [ "$1" = push ] && [ -z "$REAL_PUSH" ]; then
+  ${quote(realGit)} show --format= --name-status HEAD > ${quote(join(dir, "commit"))}
+  exit $?
+fi
+exec ${quote(realGit)} "$@"
+`,
+    { mode: 0o755 },
   );
   script(
     "gh",
@@ -91,7 +93,8 @@ ${readFileSync(join(repo, ".agents/scripts/proof.ts"), "utf8")}`,
     if (command === 'pr merge' && process.env.MERGE_FIXTURE) {
       require('node:child_process').execFileSync(${JSON.stringify(realGit)}, ['--git-dir', ${JSON.stringify(join(dir, "remote"))}, 'fetch', process.cwd(), 'HEAD:refs/heads/main'], {stdio:'pipe'});
     }
-    if (command === 'run list') console.log('123 https://example.invalid/run/123');
+    if (command === 'run list' && !process.env.NO_SHIP) console.log('123 https://example.invalid/run/123');
+    if (command === 'pr view' && args.includes('mergeCommit')) { console.log('merge-sha-fixture'); process.exit(0); }
     if (command === 'pr list' && process.env.EXISTING) console.log('https://example.invalid/pr/1');
     if (command === 'pr create') console.log('https://example.invalid/pr/1');
     if (command === 'pr view') console.log(JSON.stringify({state:process.env.MERGED ? 'MERGED' : 'OPEN', statusCheckRollup:['check','gate','secrets'].map(name => ({name,status:'COMPLETED',conclusion:process.env.MERGED ? 'SUCCESS' : 'FAILURE'}))}));
@@ -106,6 +109,13 @@ ${readFileSync(join(repo, ".agents/scripts/proof.ts"), "utf8")}`,
   mkdirSync(join(home, ".config/life-ai"), { recursive: true });
   writeFileSync(join(home, ".config/life-ai/app.pem"), "fixture");
   writeFileSync(join(home, ".config/life-ai/personal-terms"), "synthetic-private-marker");
+  const env = {
+    ...process.env,
+    PERSONAL_TERMS: "synthetic-private-marker",
+    LIFE_AI_GATE_TMP: join(dir, "gate"),
+    HOME: home,
+    PATH: `${bin}:${process.env.PATH}`,
+  };
   const runFrom = (cwd: string, extra: Record<string, string>, ...args: string[]) =>
     spawnSync(
       process.execPath,
@@ -114,18 +124,11 @@ ${readFileSync(join(repo, ".agents/scripts/proof.ts"), "utf8")}`,
         cwd,
         encoding: "utf8",
         timeout: 20_000,
-        env: {
-          ...process.env,
-          PERSONAL_TERMS: "synthetic-private-marker",
-          LIFE_AI_GATE_TMP: join(dir, "gate"),
-          HOME: home,
-          PATH: `${bin}:${process.env.PATH}`,
-          ...extra,
-        },
+        env: { ...env, ...extra },
       },
     );
   const run = (extra: Record<string, string> = {}, ...args: string[]) => runFrom(repo, extra, ...args);
-  return { dir, repo, put, git, run, runFrom };
+  return { dir, repo, put, git, run, runFrom, env };
 }
 
 const args = ["--issue", "96", "--proof", "Synthetic production smoke"];
@@ -174,15 +177,28 @@ test("check failure carries diagnostic tail", (t) => {
   f.put("docs/note.md", "changed");
   assert.match(f.run({ FAIL_CHECK: "1" }, "docs/", ...args).stderr, /fixture diagnostic tail/);
 });
-test("merge wait precedes ship wait", (t) => {
-  const f = fixture(t);
-  f.put("docs/note.md", "changed");
-  const result = f.run({ MERGED: "1", MERGE_FIXTURE: "1" }, "docs/", ...args);
-  assert.equal(result.status, 0, result.stderr);
-  const calls = readFileSync(join(f.dir, "gh.log"), "utf8");
-  assert.ok(calls.indexOf('"pr","view"') < calls.indexOf('"run","watch"'));
-  assert.match(result.stdout, /Production check passed/);
-});
+for (const [name, env, status, output] of [
+  ["passes", {}, 0, /Production check passed: https:\/\/example.invalid\/run\/123/],
+  ["fails", { FAIL_GH: "run watch" }, 1, /production check failed: https:\/\/example.invalid\/run\/123/],
+  [
+    "never starts",
+    { NO_SHIP: "1", NODE_OPTIONS: "--require ./fast-timers.cjs" },
+    1,
+    /never started the production check/,
+  ],
+] as const) {
+  test(`production check ${name}`, (t) => {
+    const f = fixture(t);
+    writeFileSync(join(f.repo, "fast-timers.cjs"), "global.setTimeout = (fn) => { fn(); return 0; };");
+    f.put("docs/note.md", "changed");
+    const result = f.run({ MERGED: "1", MERGE_FIXTURE: "1", ...env }, "docs/", ...args);
+    assert.equal(result.status, status, result.stderr);
+    assert.match(result.stdout + result.stderr, output);
+    const calls = readFileSync(join(f.dir, "gh.log"), "utf8");
+    assert.match(calls, /"--commit","merge-sha-fixture"/);
+    if (name !== "never starts") assert.match(calls, /"run","watch","123","--exit-status"/);
+  });
+}
 
 const check = (name: string, status = "COMPLETED", conclusion: string | null = "SUCCESS") => ({
   name,
@@ -405,4 +421,121 @@ test("ancestor symlink stages only the link", (t) => {
   const result = f.run({}, ".claude/root");
   assert.equal(result.status, 1, result.stderr);
   assert.equal(f.git("diff", "--cached", "--name-status"), "A\t.claude/root");
+});
+
+test("stale pushed branch can update with dirty edits and re-save without rewriting its PR head", (t) => {
+  const f = fixture(t);
+  f.put("docs/note.md", "first save");
+  f.git("add", "docs/note.md");
+  f.git("commit", "-m", "first save");
+  const oldHead = f.git("rev-parse", "HEAD");
+  execFileSync("git", ["--git-dir", join(f.dir, "remote"), "fetch", f.repo, "work:work"], { stdio: "pipe" });
+  f.git("switch", "main");
+  f.put("other.md", "upstream edit");
+  f.git("add", "other.md");
+  f.git("commit", "-m", "advance main");
+  execFileSync("git", ["--git-dir", join(f.dir, "remote"), "fetch", f.repo, "main:main"], { stdio: "pipe" });
+  f.git("switch", "work");
+  f.put("docs/note.md", "unsaved");
+  const result = f.run({}, "docs/note.md");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /git merge --autostash origin\/main/);
+  assert.match(result.stderr, /origin\/main/);
+  assert.equal(f.git("diff", "--cached", "--name-only"), "");
+  assert.equal(f.git("show", "origin/main:other.md"), "upstream edit");
+  f.git("merge", "--autostash", "origin/main");
+  assert.equal(f.git("merge-base", "--is-ancestor", oldHead, "HEAD"), "");
+  const resumed = f.run({}, "docs/note.md");
+  assert.equal(resumed.status, 1);
+  assert.match(resumed.stderr, /proof|issue/i);
+  assert.equal(f.git("show", ":docs/note.md"), "unsaved");
+  assert.equal(f.git("diff", "--cached", "--name-only"), "docs/note.md");
+});
+
+test("current worktrees save concurrently to separate remote branches", async (t) => {
+  const f = fixture(t);
+  const paths = [join(f.dir, "one"), join(f.dir, "two")];
+  for (const [index, path] of paths.entries()) {
+    f.git("worktree", "add", "-b", `worker-${index}`, path, "origin/main");
+    writeFileSync(join(path, `docs/worker-${index}.md`), `worker ${index}`);
+  }
+  await Promise.all(
+    paths.map((cwd, index) =>
+      promisify(execFile)(
+        process.execPath,
+        [
+          join(cwd, ".agents/scripts/save.ts"),
+          "--work",
+          "LAB.1.81",
+          "-m",
+          "fixture",
+          `docs/worker-${index}.md`,
+          ...args,
+          "--no-wait",
+        ],
+        { cwd, env: { ...f.env, REAL_PUSH: "1" }, timeout: 20_000 },
+      ),
+    ),
+  );
+  for (const index of [0, 1]) {
+    const remote = (...args: string[]) =>
+      execFileSync("git", ["--git-dir", join(f.dir, "remote"), ...args], { encoding: "utf8" }).trim();
+    assert.equal(remote("diff", "--name-only", "main", `worker-${index}`), `docs/worker-${index}.md`);
+    assert.equal(remote("show", `worker-${index}:docs/worker-${index}.md`), `worker ${index}`);
+  }
+});
+
+for (const command of ["fetch", "merge-base"]) {
+  test(`${command} errors fail closed before staging with a save diagnostic`, (t) => {
+    const f = fixture(t);
+    f.put("docs/note.md", "unsaved");
+    const result = f.run({ FAIL_GIT: command, FAIL_GIT_STATUS: "128" }, "docs/note.md");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, command === "fetch" ? /save: .*fetch/i : /save: .*merge-base/i);
+    assert.doesNotMatch(result.stderr, /Branch is stale|at .*file:|Command failed/);
+    assert.equal(f.git("diff", "--cached", "--name-only"), "");
+  });
+}
+
+test("remote branch advance refuses before staging and permits recovery", (t) => {
+  const f = fixture(t);
+  execFileSync("git", ["--git-dir", join(f.dir, "remote"), "fetch", f.repo, "work:work"], { stdio: "pipe" });
+  f.git("switch", "-c", "remote-change");
+  f.put("other.md", "remote change");
+  f.git("add", "other.md");
+  f.git("commit", "-m", "remote change");
+  execFileSync("git", ["--git-dir", join(f.dir, "remote"), "fetch", f.repo, "remote-change:work"], { stdio: "pipe" });
+  f.git("switch", "work");
+  const head = f.git("rev-parse", "HEAD");
+  f.put("docs/note.md", "local change");
+  const result = f.run({}, "docs/note.md", ...args, "--no-wait");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /git merge --autostash origin\/work/);
+  assert.equal(f.git("diff", "--cached", "--name-only"), "");
+  assert.equal(f.git("rev-parse", "HEAD"), head);
+  f.git("merge", "--autostash", "origin/work");
+  const resumed = f.run({ REAL_PUSH: "1" }, "docs/note.md", ...args, "--no-wait");
+  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.equal(
+    f.git("rev-parse", "HEAD"),
+    execFileSync("git", ["--git-dir", join(f.dir, "remote"), "rev-parse", "work"], { encoding: "utf8" }).trim(),
+  );
+});
+
+test("push rejection reports recovery without a stack trace", (t) => {
+  const f = fixture(t);
+  f.put("docs/note.md", "change");
+  const result = f.run({ FAIL_GIT: "push" }, "docs/note.md", ...args, "--no-wait");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /save:.*git merge --autostash origin\/work/);
+  assert.doesNotMatch(result.stderr, /Command failed|at .*file:/);
+});
+
+test("merged PR reports a skipped local update", (t) => {
+  const f = fixture(t);
+  f.put("docs/note.md", "change");
+  const result = f.run({ FAIL_GIT: "pull", MERGED: "1", MERGE_FIXTURE: "1" }, "docs/note.md", ...args);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /save:.*merged; local update was skipped.*git pull --ff-only origin main/);
+  assert.doesNotMatch(result.stderr, /Command failed|at .*file:/);
 });
