@@ -106,7 +106,7 @@ export function tools(env: Env): McpServer {
     "record_contact",
     {
       description:
-        "Create a contact, or replace its fields and links using id from search_contacts. Supply the complete links list; an empty list clears links. Reach details are optional; null or omitted clears a detail. Only vets can link to non-human members. Reuse request_id on retries to replay the original saved contact.",
+        "Create a contact, or replace its fields and links using id from search_contacts. Supply the complete links list; an empty list clears links. Reach details are optional; null, omitted, empty or whitespace-only text clears a detail. Supplied name, organisation, address and notes must contain a letter, number, punctuation mark or symbol. Email requires a dotted domain with no empty labels. Only vets can link to non-human members. Reuse request_id on retries to replay the original saved contact.",
       inputSchema: recordContactSchema,
     },
     async (input) => writeResult(env, (db) => recordContact(db, input)),
