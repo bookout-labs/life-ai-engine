@@ -58,6 +58,9 @@ const refs = ["origin/main"];
 const exists = spawnSync("git", ["show-ref", "--verify", "--quiet", `refs/remotes/${remote}`]).status;
 if (exists === 0) refs.push(remote);
 else if (exists !== 1) fail("Cannot establish remote branch status.");
+// Only a merge this run starts may be aborted; one already in progress holds the agent's resolutions.
+if (spawnSync("git", ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).status === 0)
+  fail("A merge is in progress. Finish it with git merge --continue, then save again.");
 for (const ref of refs) {
   const status = spawnSync("git", ["merge-base", "--is-ancestor", ref, "HEAD"]).status;
   if (status !== 0 && status !== 1) fail("git merge-base failed. Cannot establish branch freshness.");

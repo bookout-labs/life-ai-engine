@@ -376,6 +376,14 @@ test("stale branch that conflicts with origin/main stops before staging with rec
   assert.match(result.stderr, /does not merge cleanly.*git merge --autostash origin\/main/);
   assert.equal(f.git("rev-parse", "HEAD"), head);
   assert.equal(f.git("status", "--porcelain"), "");
+  assert.throws(() => f.git("merge", "origin/main"));
+  f.put("docs/note.md", "resolved");
+  f.git("add", "docs/note.md");
+  const pending = f.run({}, "docs/note.md", ...args);
+  assert.equal(pending.status, 1);
+  assert.match(pending.stderr, /merge is in progress/);
+  assert.equal(f.git("show", ":docs/note.md"), "resolved");
+  assert.notEqual(f.git("rev-parse", "-q", "--verify", "MERGE_HEAD"), "");
 });
 
 test("current worktrees save concurrently to separate remote branches", async (t) => {
