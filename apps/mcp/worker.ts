@@ -20,6 +20,7 @@ import { logWorkout, logWorkoutSchema } from "../../packages/core/log-workout.ts
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
 import { recordInvestmentBuy, recordInvestmentBuySchema } from "../../packages/core/record-investment-buy.ts";
 import { schedule, today } from "../../packages/core/schedule.ts";
+import { trainingTrend, trainingTrendSchema } from "../../packages/core/training-trend.ts";
 import { publicOrigin } from "./origin.ts";
 
 const ORIGIN = publicOrigin(
@@ -112,6 +113,18 @@ function tools(env: Env): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async (input) => writeResult(env, (db) => logWorkout(db, input)),
+  );
+  server.registerTool(
+    "training_trend",
+    {
+      description:
+        "Read weekly logged training totals and burnout warning heuristics, not a diagnosis. Defaults to eight Monday-start ISO weeks through today in America/Chicago. asOf is a stored local calendar date. The current week is partial and excluded from spike and drop checks. Duration sums known block seconds. Volume converts known weight x sets x reps to kg. Coverage counts expose missing measurements. No-rest counts every session kind. Empty weeks mean no logs, not proven inactivity. Flags include reasons and evidence weeks.",
+      inputSchema: trainingTrendSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => trainingTrend(db, input))) }],
+    }),
   );
   server.registerTool(
     "payoff_explorer",
