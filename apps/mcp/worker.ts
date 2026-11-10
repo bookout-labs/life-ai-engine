@@ -20,6 +20,12 @@ import {
   recordCommissionPlan,
   recordCommissionPlanSchema,
 } from "../../packages/core/commission-split.ts";
+import {
+  documentsCheck,
+  documentsCheckSchema,
+  recordDocument,
+  recordDocumentSchema,
+} from "../../packages/core/documents.ts";
 import { accounts, budgetTargets } from "../../packages/core/finances.ts";
 import {
   giftsInputSchema,
@@ -343,6 +349,31 @@ export function tools(env: Env): McpServer {
         return saved;
       });
       return missing ? { isError: true, content: [{ type: "text" as const, text: "Gift not found." }] } : result;
+    },
+  );
+  server.registerTool(
+    "documents_check",
+    {
+      description:
+        "Check essential estate and identity papers for human household members. Adult requirements begin on the eighteenth birthday; unknown ages are listed separately. Minors require a household guardianship document. Passports are optional with a 180-day expiry window; other papers use 60 days. Null location means unknown. as_of defaults to today in America/Chicago. Counts use each requirement’s most urgent status; location_unknown is also retained on expiring or expired papers.",
+      inputSchema: documentsCheckSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => documentsCheck(db, input))) }],
+    }),
+  );
+  server.registerTool(
+    "record_document",
+    {
+      description:
+        "Record or replace a paper by kind and member_id. Null member_id covers the household; guardianship must be household-level. One current entry per kind and member. Supply all fields on replacement; omitted fields clear them. location null means unknown. file_key references an existing R2 file record. Generate one request_id per write and reuse it on retries; retries return the original result without overwriting later changes.",
+      inputSchema: recordDocumentSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => {
+      const value = recordDocumentSchema.parse(input);
+      return writeResult(env, (db) => recordDocument(db, value));
     },
   );
   return server;
