@@ -222,3 +222,41 @@ test("a shared budget pays loans on one calendar, so a payment frees up only aft
     ]);
   }
 });
+
+test("a balance still owed at or after maturity is reported as matured, with nothing projected", () => {
+  // Twelve payments from 2026-02-01, so the last one is due 2027-01-01.
+  const late = loan({ name: "Late", principal: 120_000n, apr: 6_000n, termMonths: 12 });
+  const current = loan({
+    name: "Current",
+    principal: 120_000n,
+    apr: 6_000n,
+    termMonths: 12,
+    firstPaymentOn: "2026-06-01",
+  });
+  for (const accrual of ["daily", "monthly"] as const) {
+    for (const on of ["2027-01-01", "2027-03-15"]) {
+      const start = { balance: 50_000n, on };
+      const result = explore([{ loan: { ...late, accrual }, start }, { loan: current }], { extraMonthly: 10_000n });
+      const [matured] = result.loans;
+      assert.equal(matured?.status, "matured_with_balance_outstanding", `${accrual} on ${on}`);
+      assert.deepEqual(matured?.scenarios, [], `${accrual} on ${on}: no payoff dated before ${on}`);
+      assert.deepEqual(result.strategies, [], "one loan left to project, so no portfolio order");
+    }
+  }
+});
+
+test("a daily-accrual balance between payment dates is unsupported, since its accrued interest is unknown", () => {
+  const terms = { principal: 1_000_000n, apr: 7_300n, termMonths: 36 } as const;
+  const start = (on: string) => ({ balance: 800_000n, on });
+  const status = (accrual: "daily" | "monthly", on: string) =>
+    explore([{ loan: loan({ ...terms, accrual }), start: start(on) }], {}).loans[0];
+  const between = status("daily", "2026-06-15");
+  assert.equal(between?.status, "unsupported_start");
+  assert.deepEqual(between?.scenarios, []);
+  assert.equal(status("daily", "2026-06-01")?.status, "projected", "a balance on a due date has no accrued interest");
+  assert.equal(
+    status("monthly", "2026-06-15")?.status,
+    "projected",
+    "monthly accrual charges a full month at the due date",
+  );
+});

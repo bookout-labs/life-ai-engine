@@ -210,22 +210,48 @@ const summary = (account: Account, baseline: Account) => ({
 });
 
 type Holding = { loan: Loan; start?: Position };
+type Standing =
+  | { status: "projected" }
+  | { status: "matured_with_balance_outstanding" | "unsupported_start"; reason: string };
+
+// A recorded balance is principal only, and no payment history is stored, so a projection may start
+// only where nothing else is owed: on a due date for daily accrual, any date for monthly, before maturity.
+function standing(loan: Loan, start: Position): Standing {
+  const end = maturity(loan);
+  if (start.balance > 0n && start.on >= end) {
+    return {
+      status: "matured_with_balance_outstanding",
+      reason: `${dollars(start.balance)} is still owed on ${start.on}, at or after the final payment due ${end}, so no schedule remains to project. The lender's payoff quote is the amount due.`,
+    };
+  }
+  if (loan.accrual === "daily" && dueDate(loan, dueAfter(loan, start.on) - 1) !== start.on) {
+    return {
+      status: "unsupported_start",
+      reason: `The balance on ${start.on} falls between payment dates. Interest accrues daily and the balance is principal only, so the interest accrued since the last payment is unknown. Record a balance as of a payment date to project this loan.`,
+    };
+  }
+  return { status: "projected" };
+}
 
 export function explore(
   holdings: Holding[],
   plan: { extraMonthly?: bigint; lumpSum?: { on: string; amount: bigint } },
 ) {
-  const positioned = holdings.map(({ loan, start }) => ({ loan, start: start ?? origination(loan) }));
+  const positioned = holdings.map(({ loan, start = origination(loan) }) => ({ loan, start, ...standing(loan, start) }));
+  const projected = positioned.filter((h) => h.status === "projected");
   const strategies: Strategy[] = [
     { kind: "baseline" },
     ...(plan.extraMonthly ? [{ kind: "extra", monthly: plan.extraMonthly } as const] : []),
     ...(plan.lumpSum ? [{ kind: "lump_sum", ...plan.lumpSum } as const] : []),
     { kind: "biweekly" },
   ];
-  let baselineInterest = 0n;
-  const loans = positioned.map(({ loan, start }) => {
-    const baseline = run(loan, start, { kind: "baseline" });
-    baselineInterest += baseline.interestPaid;
+  const baselines = new Map<(typeof positioned)[number], Account>(
+    projected.map((h) => [h, run(h.loan, h.start, { kind: "baseline" })]),
+  );
+  const baselineInterest = [...baselines.values()].reduce((sum, a) => sum + a.interestPaid, 0n);
+  const loans = positioned.map((h) => {
+    const { loan, start, ...standing } = h;
+    const baseline = baselines.get(h);
     return {
       name: loan.name,
       accrual: loan.accrual,
@@ -235,21 +261,24 @@ export function explore(
         loan.accrual === "daily"
           ? "Interest accrues daily, so paying earlier or more often saves interest."
           : "Interest is charged once a month, so paying earlier in the month saves nothing; only paying more does.",
-      scenarios: strategies.map((s) =>
-        s.kind === "lump_sum" && s.on < start.on
-          ? {
-              strategy: s.kind,
-              excluded: `The lump sum on ${s.on} predates the starting balance on ${start.on}, which already reflects it.`,
-            }
-          : { strategy: s.kind, ...summary(run(loan, start, s), baseline) },
-      ),
+      ...standing,
+      scenarios: baseline
+        ? strategies.map((s) =>
+            s.kind === "lump_sum" && s.on < start.on
+              ? {
+                  strategy: s.kind,
+                  excluded: `The lump sum on ${s.on} predates the starting balance on ${start.on}, which already reflects it.`,
+                }
+              : { strategy: s.kind, ...summary(run(loan, start, s), baseline) },
+          )
+        : [],
     };
   });
   const orders =
-    holdings.length < 2
+    projected.length < 2
       ? []
       : (["avalanche", "snowball"] as const).map((order) => {
-          const accounts = positioned.map(({ loan, start }) => new Account(loan, start));
+          const accounts = projected.map(({ loan, start }) => new Account(loan, start));
           payDown(accounts, plan.extraMonthly ?? 0n, order);
           const interest = accounts.reduce((sum, a) => sum + a.interestPaid, 0n);
           const paid_off = accounts
