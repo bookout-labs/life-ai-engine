@@ -82,3 +82,29 @@ test("record_gift rejects incomplete actions before database access", async () =
     assert.doesNotMatch(text, /Retry with the same request_id/);
   }
 });
+
+test("upkeep future date returns a validation error without a retry hint", {
+  skip: !process.env.UPKEEP_TEST_DATABASE_URL,
+}, async () => {
+  const response = await createMcpHandler(() =>
+    tools({ HYPERDRIVE: { connectionString: process.env.UPKEEP_TEST_DATABASE_URL } } as never),
+  ).fetch(
+    new Request("https://synthetic.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "log_upkeep_completion",
+          arguments: { request_id: crypto.randomUUID(), task_id: "1", completed_on: "2200-01-01" },
+        },
+      }),
+    }),
+  );
+  const text = await response.text();
+  assert.match(text, /"isError":true/);
+  assert.match(text, /Completion date cannot be in the future/);
+  assert.doesNotMatch(text, /retry/i);
+});

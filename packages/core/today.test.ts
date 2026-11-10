@@ -9,7 +9,8 @@ import { weekly } from "./weekly.ts";
 
 test("daily and weekly readers expose overdue, due this week and unrecorded upkeep", {
   skip: !process.env.UPKEEP_TEST_DATABASE_URL,
-}, async () => {
+}, async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2042-01-01T12:00:00Z") });
   const db = new pg.Client({ connectionString: process.env.UPKEEP_TEST_DATABASE_URL });
   await db.connect();
   const namespace = `upkeep_views_${randomUUID().replaceAll("-", "")}`;

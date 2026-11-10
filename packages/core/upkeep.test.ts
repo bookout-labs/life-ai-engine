@@ -164,6 +164,7 @@ test("upkeep derives monthly dates and preserves unknown history", {
         [12, 15, "2027-01-03", "2027-12-15"],
         [1, 5, "2026-12-20", "2028-01-05"],
         [1, 1, "2025-07-02", "2026-01-01"],
+        [1, 1, "2024-07-02", "2025-01-01"],
         [2, 29, "2024-02-29", "2025-02-28"],
         [2, 29, "2025-02-28", "2026-02-28"],
       ] as const) {
@@ -176,7 +177,7 @@ test("upkeep derives monthly dates and preserves unknown history", {
         await logUpkeepCompletion(db, { request_id: randomUUID(), task_id: task.id, completed_on: done });
         assert.equal((await listUpkeep(db, "2030-01-01")).find((item) => item.id === task.id)?.next_due_on, expected);
       }
-      await db.query("truncate upkeep_tasks cascade");
+      await db.query("truncate upkeep_tasks restart identity cascade");
       for (let i = 0; i < 11; i++)
         await db.query("insert into upkeep_tasks (name, category, interval_months) values ('Synthetic', 'home', 1)");
       const ids = (await listUpkeep(db, "2030-01-01")).map((item) => BigInt(item.id));
@@ -189,6 +190,11 @@ test("upkeep derives monthly dates and preserves unknown history", {
         /future|today/i,
       );
     });
+    t.mock.timers.setTime(new Date("2042-01-01T02:00:00Z").getTime());
+    await assert.rejects(
+      logUpkeepCompletion(db, { request_id: randomUUID(), task_id: "1", completed_on: "2042-01-01" }),
+      /future/i,
+    );
     await db.query(down);
     await db.query(up);
     await db.query(down);

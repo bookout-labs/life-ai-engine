@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { z } from "zod";
+import { today } from "./schedule.ts";
 
 type Database = pg.ClientBase | pg.Pool;
 const dateSchema = z.iso.date().refine((date) => date >= "1900-01-01" && date <= "2200-12-31");
@@ -71,13 +72,10 @@ export async function upkeepDue(db: Database, from: string, days: number) {
 
 export async function logUpkeepCompletion(db: Database, input: z.input<typeof logUpkeepCompletionSchema>) {
   const data = logUpkeepCompletionSchema.parse(input);
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Chicago",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-  if (data.completed_on > today) throw new Error("Completion date cannot be in the future");
+  if (data.completed_on > today())
+    throw new z.ZodError([
+      { code: "custom", path: ["completed_on"], message: "Completion date cannot be in the future" },
+    ]);
   const { rows } = await db.query(
     `insert into upkeep_completions (request_id, task_id, completed_on, notes) values ($1, $2, $3, $4)
       on conflict (request_id) do nothing returning ${completionColumns}`,
