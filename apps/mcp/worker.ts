@@ -68,6 +68,12 @@ import {
 import { trainingTrend, trainingTrendSchema } from "../../packages/core/training-trend.ts";
 import { listUpkeep, logUpkeepCompletion, logUpkeepCompletionSchema } from "../../packages/core/upkeep.ts";
 import {
+  recordWarranty,
+  recordWarrantySchema,
+  warrantiesCheck,
+  warrantiesCheckSchema,
+} from "../../packages/core/warranties.ts";
+import {
   addWeeklySessions,
   addWeeklySessionsSchema,
   previewWeeklySessions,
@@ -496,6 +502,31 @@ export function tools(env: Env): McpServer {
     async (input) => {
       const value = recordDocumentSchema.parse(input);
       return writeResult(env, (db) => recordDocument(db, value));
+    },
+  );
+  server.registerTool(
+    "warranties_check",
+    {
+      description:
+        "List expired warranties, those expiring today through 60 days ahead, active coverage, and unknown expiry, with counts. Lifetime coverage is active. as_of defaults to today in America/Chicago. This check does not write records.",
+      inputSchema: warrantiesCheckSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => warrantiesCheck(db, input))) }],
+    }),
+  );
+  server.registerTool(
+    "record_warranty",
+    {
+      description:
+        "Record product coverage or a service plan. Omit id to create; supply an existing id to replace every field. Omitted optional fields clear them. Null expiry defaults to unknown; set expiry_unknown false with null expires_on for lifetime coverage. cost_cents is the coverage cost in USD cents, not the product price. file_key references an existing R2 file record. A repeated source_ref returns the existing warranty without changes; replacement cannot take another warranty's source_ref. Generate one request_id per write and reuse it on retries to return the original result without overwriting later changes.",
+      inputSchema: recordWarrantySchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => {
+      const value = recordWarrantySchema.parse(input);
+      return writeResult(env, (db) => recordWarranty(db, value));
     },
   );
   return server;
