@@ -142,3 +142,33 @@ test("connector amount bounds accept the last cent and reject the next dollar ma
     assert.throws(() => fromConnector([{ ...transaction, amount: sign * limit }], { source: "monarch" }));
   }
 });
+
+test("investment activity is excluded from spending", () => {
+  const rows = [
+    ["Buy", -1000],
+    ["Dividends & Capital Gains", 25],
+    ["Groceries", -50],
+    ["Sell", 100],
+  ].map(([category, amount], index) => ({ ...transaction, id: String(index), category, amount }));
+  const imported = fromConnector(rows, { source: "monarch" });
+  assert.deepEqual(
+    imported.map((row) => row.exclusion_reason),
+    ["transfer", "income", null, "transfer"],
+  );
+  assert.equal(buildSpending(imported, [], { month: "2040-02" }, "2040-02-28").total, "50.00");
+  assert.equal(imported.slice(0, 3).filter((row) => row.exclusion_reason !== null).length, 2);
+});
+
+test("invalid connector amounts explain the constraint", () => {
+  for (const [amount, message] of [
+    [1.001, "Amount must be in whole cents"],
+    [10 ** 10, "Amount absolute value must be below 10 billion"],
+  ] as const) {
+    const result = importTransactionsSchema.safeParse({
+      source: "monarch",
+      transactions: [{ ...transaction, amount }],
+    });
+    assert.equal(result.success, false);
+    if (!result.success) assert.ok(result.error.issues.some((issue) => issue.message === message));
+  }
+});
