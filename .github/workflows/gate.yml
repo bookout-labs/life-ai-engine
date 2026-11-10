@@ -33,9 +33,14 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 26
-      - name: Claude CLI for reviewing Codex-built changes
+      # Every reviewer CLI, signed in with the subscriptions, so the review runs whichever provider is up.
+      - name: Reviewer CLIs
         if: github.event_name == 'pull_request_target'
-        run: npm install -g @anthropic-ai/claude-code@2.1.319
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          npm install -g @anthropic-ai/claude-code@2.1.319 @openai/codex@0.167.0
+          mkdir -p ~/.codex && printf '%s' "$CODEX_AUTH_JSON" > ~/.codex/auth.json
       - name: Paths, personal terms, board issue, proof, cross-family review, round cap
         if: github.event_name == 'pull_request_target'
         env:
