@@ -13,6 +13,7 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import pg from "pg";
 import * as z from "zod";
 import { billsDue, deadlinesDue } from "../../packages/core/bills.ts";
+import { investmentBuys } from "../../packages/core/investment-buys.ts";
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
 import { schedule, today } from "../../packages/core/schedule.ts";
 import { publicOrigin } from "./origin.ts";
@@ -65,6 +66,13 @@ function tools(env: Env): McpServer {
       }));
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },
+  );
+  server.registerTool(
+    "investment_buys",
+    { description: "Read planned and completed investment buys.", inputSchema: z.object({}) },
+    async () => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, investmentBuys)) }],
+    }),
   );
   server.registerTool(
     "page_read",
