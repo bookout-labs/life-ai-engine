@@ -5,6 +5,7 @@
     ".agents/hooks/*.ts",
     ".agents/scripts/*.ts",
     ".agents/**/*.test.ts",
+    "packages/**/*.test.ts",
     "apps/*/worker.ts",
     "apps/*/smoke.ts"
   ],

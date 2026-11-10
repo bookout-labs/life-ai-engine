@@ -12,6 +12,7 @@ import {
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import pg from "pg";
 import * as z from "zod";
+import { payoffExplorer, payoffInputSchema } from "../../packages/core/amortize.ts";
 import { billsDue, deadlinesDue } from "../../packages/core/bills.ts";
 import { investmentBuys } from "../../packages/core/investment-buys.ts";
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
@@ -72,6 +73,18 @@ function tools(env: Env): McpServer {
     { description: "Read planned and completed investment buys.", inputSchema: z.object({}) },
     async () => ({
       content: [{ type: "text", text: JSON.stringify(await withDb(env, investmentBuys)) }],
+    }),
+  );
+  server.registerTool(
+    "payoff_explorer",
+    {
+      description:
+        "Read-only payoff explorer for the family's loans: schedules computed from each loan's terms, starting at its latest recorded balance, compared across extra monthly principal, a lump sum, biweekly payments and, across loans, avalanche versus snowball. Each loan's latest balance is checked against the computed schedule. Amounts are dollars as decimal strings.",
+      inputSchema: payoffInputSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => payoffExplorer(db, input))) }],
     }),
   );
   server.registerTool(
