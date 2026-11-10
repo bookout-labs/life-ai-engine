@@ -134,7 +134,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "orchestrator-compaction",
-    rule: "Preserve automatic coordinator compaction with Claude summary instructions or a validated private Codex store snapshot. Manual compaction and workers remain unaffected. Model-specific proactive thresholds require explicit configuration.",
+    rule: "Coordinators hand off at 400k tokens, where each agent's automatic compaction fires (CLAUDE_CODE_AUTO_COMPACT_WINDOW, model_auto_compact_token_limit). Claude's compaction is blocked, so it hands off with the full context; Codex compacts once, then hands off from its messages, the summary and the program store. Manual compaction and workers remain unaffected.",
     trigger: "automatic coordinator compaction",
     route: {
       kind: "hook",

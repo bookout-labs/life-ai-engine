@@ -1,3 +1,6 @@
+# Coordinators hand off at 400k; see docs/orchestrator-handoff.md.
+model_auto_compact_token_limit = 400000
+
 [mcp_servers.monarch]
 url = "https://api.monarch.com/mcp"
 

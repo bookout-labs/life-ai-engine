@@ -21,7 +21,7 @@ Done when the issue records the callers, frequency, run time and a whole-script 
 
 ## 2. Inventory
 
-Read the script end to end, plus everything it imports and its tests. Split it into pieces: contiguous line ranges that each do one job. For each piece, name the real failure it prevents, citing the PR, issue or incident from git log and the board. A piece with no failure behind it is speculative machinery.
+Read the script end to end, plus everything it imports and its tests. Split it into pieces: contiguous line ranges that each do one job. For each piece, name the real failure it prevents, citing the PR, issue or incident from git log and the board. A piece with no failure behind it is speculative machinery. A piece that never runs may be switched off rather than unwanted: check Joe's environment, user config and sibling repos before calling it dead.
 
 Done when every line belongs to exactly one piece, and each piece has a line range, one plain sentence, and a cited failure or "none found".
 
@@ -35,7 +35,7 @@ For each piece, find whether one of these already does the job:
 - Neon;
 - git itself;
 - a maintained open-source package;
-- existing code elsewhere in this repo.
+- existing code elsewhere in this repo. A sibling repo shows what Joe wants, not how to build it; its code has not been weeded, so don't copy it.
 
 Use current primary docs and the `lab` skill's research order. Cite each source and mark every claim confirmed or unverified.
 
