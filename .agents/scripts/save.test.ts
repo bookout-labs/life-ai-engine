@@ -131,6 +131,17 @@ test("a queueing failure says the PR is pushed but not queued", (t) => {
   assert.match(result.stderr, /save: .* is pushed but not queued/);
   assert.doesNotMatch(result.stderr, /Command failed|at .*file:/);
 });
+test("a file already removed with git rm saves its deletion; a name that matches nothing says so", (t) => {
+  const f = fixture(t);
+  f.git("rm", "-q", "docs/deleted.md");
+  const result = f.run({}, "docs/deleted.md", ...args);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(join(f.dir, "commit"), "utf8"), /D\tdocs\/deleted.md/);
+  const typo = f.run({}, "docs/no-such-file.md", ...args);
+  assert.equal(typo.status, 1);
+  assert.match(typo.stderr, /save: Nothing to save at docs\/no-such-file.md/);
+  assert.doesNotMatch(typo.stderr, /Command failed|at .*file:/);
+});
 test("refuses on main", (t) => {
   const f = fixture(t);
   f.git("switch", "main");
