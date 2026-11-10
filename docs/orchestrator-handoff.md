@@ -51,9 +51,9 @@ Always launch the successor as a new top-level T3 thread, pin it and unpin the r
 
 Both configurations register UserPromptSubmit, Stop and automatic PreCompact. The first native prompt fixes opt-in in a private SQLite registration keyed by provider and session_id. Both positive and negative decisions persist, later prompts cannot change them, and hooks with agent_id never touch parent-session state. Enable and trust the hooks before the session's first prompt.
 
-Coordinators hand off at 400k tokens, where each agent's automatic compaction fires: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in `.claude/settings.json` and `model_auto_compact_token_limit` in `.codex/config.toml`. The agents count their own tokens; the hook never reads transcripts.
+Coordinators hand off at 400k tokens, where each agent's automatic compaction fires: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in `.claude/settings.json` and `model_auto_compact_token_limit` in `.codex/config.toml`. Claude asks for the handoff earlier, at its first Stop past 350k, read from the last main-thread call's usage in `transcript_path` (input, cache and output tokens), so the handoff turn ends before compaction fires. A blocked compaction retries before every model call, which made the old 400k handoff turn noisy (#221). The transcript may lag one call behind; that moves the handoff one Stop later, inside the 50k margin.
 
-Claude: a blocked proactive compaction is skipped and the conversation continues uncompacted ([PreCompact](https://code.claude.com/docs/en/hooks#precompact)). The hook blocks it for a coordinator, and the next Stop asks for the handoff while the full context is still there.
+Claude: a blocked proactive compaction is skipped and the conversation continues uncompacted ([PreCompact](https://code.claude.com/docs/en/hooks#precompact)). The hook blocks it for a coordinator as a backstop, and the next Stop asks for the handoff, if the 350k Stop has not already.
 
 Codex: blocking compaction interrupts the turn, and every later turn hits the limit again before the model can act, so the coordinator wedges (#145, live test). A custom `compact_prompt` is ignored by Codex's server-side compaction. So Codex compacts once, and the hook asks for the handoff at that turn's Stop. Codex keeps every user message; the rest comes from its compacted summary and the program store on disk.
 
@@ -80,7 +80,7 @@ A primary config that differs from fetched origin/main receives no new approval.
 
 ## Design and verification
 
-The agents count tokens themselves through their automatic-compaction settings, so the hook reads no transcripts. SQLite keeps session identity, first-prompt decisions and the compaction and Stop claims together behind the process interface. Provider session ids never stand in for T3 thread ids.
+Codex counts its own tokens through its automatic-compaction setting. For Claude the hook reads only the last usage row of the transcript at Stop. SQLite keeps session identity, first-prompt decisions and the compaction and Stop claims together behind the process interface. Provider session ids never stand in for T3 thread ids.
 
 Process fixtures cover first-negative then later-positive prompts, worker exclusion, replay, concurrent claims, and automatic and manual compaction on both providers. Run `node --test .agents/hooks/orchestrator-rotation.test.ts .agents/scripts/handoff.test.ts` and `npm run check`.
 
