@@ -20,12 +20,13 @@ export const linkSubscriptionMerchantSchema = z.object({
   action: z.enum(["link", "unlink"]),
 });
 const linkSchema = z.object({ obligation_id: id, merchant });
-const savedSchema = linkSchema.extend({ linked: z.boolean() });
+const savedSchema = linkSchema.extend({ linked: z.boolean(), warning: z.string().optional() });
 const obligationSchema = z.object({
   id,
   name: z.string(),
   cadence: z.enum(["monthly", "yearly"]),
   due_day: z.number().int().nullable(),
+  day_is_estimate: z.boolean().default(false),
   due_month: z.number().int().nullable(),
   pays_from: z.string().nullable(),
   ended_on: z.iso.date().nullable(),
@@ -46,19 +47,23 @@ type SubscriptionStatus = "charged_this_cycle" | "missing_this_cycle" | "not_lin
 const MONTHLY_MIN_DAYS = 25;
 const MONTHLY_MAX_DAYS = 35;
 const MIN_CHARGES = 2;
-const AMOUNT_TOLERANCE_BPS = 500n;
+const TWO_MONTH_MIN_DAYS = 55;
+const TWO_MONTH_MAX_DAYS = 70;
+const DUPLICATE_WINDOW_DAYS = 3;
+const AMOUNT_TOLERANCE_BPS = 1000n;
+const BASIS_POINTS = 10000n;
+const EARLY_GRACE_DAYS = 5;
+const ESTIMATED_EARLY_GRACE_DAYS = 7;
 const DAY_MS = 86400000;
 function cents(value: string): bigint {
-  const [whole = "0", fraction = ""] = value.split(".");
-  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
+  const negative = value.startsWith("-");
+  const [whole = "0", fraction = ""] = value.replace(/^-/, "").split(".");
+  const amount = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
+  return negative ? -amount : amount;
 }
 const dayNumber = (value: string) => Date.parse(`${value}T00:00:00Z`) / DAY_MS;
 const eligible = (row: Transaction, asOf: string) =>
-  !row.pending &&
-  row.exclusion_reason === null &&
-  !row.amount.startsWith("-") &&
-  cents(row.amount) > 0n &&
-  row.posted_on <= asOf;
+  !row.pending && row.exclusion_reason === null && cents(row.amount) > 0n && row.posted_on <= asOf;
 const order = (a: Transaction, b: Transaction) =>
   a.posted_on.localeCompare(b.posted_on) || a.source.localeCompare(b.source) || a.source_id.localeCompare(b.source_id);
 function evidence(row: Transaction) {
@@ -72,7 +77,7 @@ function evidence(row: Transaction) {
   };
 }
 
-// Every consecutive debit must fit, so weekly shopping cannot qualify through a cherry-picked monthly pair.
+// Keep every occurrence in the spacing check, so weekly shopping cannot qualify through a monthly pair.
 function recurringMerchants(rows: readonly Transaction[], links: readonly z.infer<typeof linkSchema>[], asOf: string) {
   const linked = new Set(links.map((entry) => entry.merchant));
   const groups = new Map<string, Transaction[]>();
@@ -86,26 +91,32 @@ function recurringMerchants(rows: readonly Transaction[], links: readonly z.infe
     .sort(([a], [b]) => a.localeCompare(b))
     .flatMap(([merchant, history]) => {
       history.sort(order);
+      const occurrences: Transaction[] = [];
+      for (const row of history) {
+        const previous = occurrences.at(-1);
+        if (!previous || dayNumber(row.posted_on) - dayNumber(previous.posted_on) > DUPLICATE_WINDOW_DAYS)
+          occurrences.push(row);
+      }
       const last = history.at(-1);
-      if (history.length < MIN_CHARGES || !last || dayNumber(asOf) - dayNumber(last.posted_on) > MONTHLY_MAX_DAYS)
-        return [];
-      for (let i = 1; i < history.length; i++) {
-        const previous = history[i - 1];
-        const current = history[i];
+      if (occurrences.length < MIN_CHARGES || !last) return [];
+      let latestGap = 0;
+      for (let i = 1; i < occurrences.length; i++) {
+        const previous = occurrences[i - 1];
+        const current = occurrences[i];
         if (!previous || !current) continue;
         const gap = dayNumber(current.posted_on) - dayNumber(previous.posted_on);
-        if (gap < MONTHLY_MIN_DAYS || gap > MONTHLY_MAX_DAYS) return [];
+        if (
+          !(gap >= MONTHLY_MIN_DAYS && gap <= MONTHLY_MAX_DAYS) &&
+          !(gap >= TWO_MONTH_MIN_DAYS && gap <= TWO_MONTH_MAX_DAYS)
+        )
+          return [];
+        const before = cents(previous.amount);
+        const change = cents(current.amount) - before;
+        if ((change < 0n ? -change : change) * BASIS_POINTS > before * AMOUNT_TOLERANCE_BPS) return [];
+        latestGap = gap;
       }
-      const amounts = history.map((row) => cents(row.amount));
-      const low = amounts.reduce((a, b) => {
-        if (a < b) return a;
-        return b;
-      });
-      const high = amounts.reduce((a, b) => {
-        if (a > b) return a;
-        return b;
-      });
-      if ((high - low) * 10000n > low * AMOUNT_TOLERANCE_BPS) return [];
+      const recentDays = latestGap >= TWO_MONTH_MIN_DAYS ? TWO_MONTH_MAX_DAYS : MONTHLY_MAX_DAYS;
+      if (dayNumber(asOf) - dayNumber(last.posted_on) > recentDays) return [];
       return [{ merchant, cadence: "monthly" as const, evidence: history.map(evidence) }];
     });
 }
@@ -114,10 +125,19 @@ function cycle(obligation: z.infer<typeof obligationSchema>, asOf: string) {
   const now = new Date(`${asOf}T00:00:00Z`);
   const due = (year: number, month: number) => {
     const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-    return new Date(Date.UTC(year, month, Math.min(obligation.due_day ?? 1, last))).toISOString().slice(0, 10);
+    const grace =
+      obligation.cadence === "monthly"
+        ? obligation.day_is_estimate
+          ? ESTIMATED_EARLY_GRACE_DAYS
+          : EARLY_GRACE_DAYS
+        : 0;
+    return new Date(Date.UTC(year, month, Math.min(obligation.due_day ?? 1, last)) - grace * DAY_MS)
+      .toISOString()
+      .slice(0, 10);
   };
   let year = now.getUTCFullYear();
   let month = obligation.cadence === "yearly" ? (obligation.due_month ?? 1) - 1 : now.getUTCMonth();
+  if (obligation.cadence === "monthly" && due(year, month + 1) <= asOf) month++;
   if (due(year, month) > asOf) {
     if (obligation.cadence === "yearly") year--;
     else month--;
@@ -143,7 +163,15 @@ export function buildSubscriptionsCheck(
         .sort();
       const history = debits.filter((row) => merchants.includes(row.merchant));
       const last = history.at(-1);
-      const previous = history.at(-2);
+      const cycles = new Map<string, Transaction[]>();
+      for (const row of history) {
+        const key = cycle(obligation, row.posted_on).from;
+        const charges = cycles.get(key) ?? [];
+        charges.push(row);
+        cycles.set(key, charges);
+      }
+      const distinctCycles = [...cycles];
+      const previous = distinctCycles.at(-2)?.[1].at(-1);
       const interval = cycle(obligation, asOf);
       const charged = history.some((row) => row.posted_on >= interval.from && row.posted_on <= interval.through);
       const status: SubscriptionStatus = !merchants.length
@@ -165,20 +193,43 @@ export function buildSubscriptionsCheck(
         status,
         last_charge: last ? evidence(last) : null,
         previous_amount: previous?.amount ?? null,
+        duplicate_charges: distinctCycles
+          .filter(([, charges]) => charges.length > 1)
+          .map(([cycle_from, charges]) => ({
+            cycle_from,
+            dates: charges.map((row) => row.posted_on),
+            evidence: charges.map(evidence),
+          })),
         price_changed: last && previous ? cents(last.amount) !== cents(previous.amount) : false,
       };
     });
   return {
     as_of: asOf,
     subscriptions,
+    charged_after_end: obligations.flatMap((obligation) => {
+      if (obligation.ended_on === null) return [];
+      const merchants = links.filter((entry) => entry.obligation_id === obligation.id).map((entry) => entry.merchant);
+      const endedOn = obligation.ended_on;
+      const charges = debits.filter((row) => merchants.includes(row.merchant) && row.posted_on > endedOn);
+      return charges.length
+        ? [
+            {
+              obligation_id: obligation.id,
+              name: obligation.name,
+              ended_on: obligation.ended_on,
+              evidence: charges.map(evidence),
+            },
+          ]
+        : [];
+    }),
     missing_this_cycle: subscriptions.filter((row) => row.status === "missing_this_cycle"),
     unrecorded_recurring_merchants: recurringMerchants(transactions, links, asOf),
     notes: [
       "USD expenses are positive. Refunds, credits, pending and excluded transactions never count as charges. Results reflect imported transactions only; missing does not establish cancellation.",
-      "A cycle starts on the latest scheduled due date on or before as_of and ends before the next due date. Due days clamp to month end. Missing due_day assumes day 1 and is flagged. Early postings may fall in the prior cycle.",
+      `Monthly cycles start ${EARLY_GRACE_DAYS} days before the clamped due date, or ${ESTIMATED_EARLY_GRACE_DAYS} when day_is_estimate, and end before the next such boundary. Yearly cycles start on the clamped due date. Missing due_day assumes day 1 and is flagged.`,
       "Yearly recurrence cannot yet be detected from the short imported history. A linked yearly subscription without a charge in its cycle is yearly_unknown, not evidence of cancellation.",
-      `Monthly candidates need at least ${MIN_CHARGES} debits, every consecutive gap ${MONTHLY_MIN_DAYS}-${MONTHLY_MAX_DAYS} days, a last debit within ${MONTHLY_MAX_DAYS} days and a total amount range within ${AMOUNT_TOLERANCE_BPS / 100n}% of the minimum. Exact merchants only; all obligation links exclude candidates. Evidence requires human confirmation.`,
-      "Price change compares the last two eligible debits across linked merchants and accounts. Multiple charges or account moves require human confirmation.",
+      `Monthly candidates need at least ${MIN_CHARGES} occurrences, grouping debits within ${DUPLICATE_WINDOW_DAYS} days of the occurrence's first debit. Gaps must be ${MONTHLY_MIN_DAYS}-${MONTHLY_MAX_DAYS} or ${TWO_MONTH_MIN_DAYS}-${TWO_MONTH_MAX_DAYS} days; the latest debit must be within ${MONTHLY_MAX_DAYS} days, or ${TWO_MONTH_MAX_DAYS} if the last gap was two months. Consecutive occurrence amounts (first debit) may differ by at most ${AMOUNT_TOLERANCE_BPS / 100n}% of the previous amount. Exact merchants only; all obligation links exclude candidates. Confirm evidence privately.`,
+      "Price compares the latest debit in each of the last two distinct charged cycles, across linked merchants and accounts. Duplicate cycles expose every debit date and evidence. Ended subscriptions with debits strictly after ended_on appear in charged_after_end.",
     ],
   };
 }
@@ -188,7 +239,7 @@ export async function subscriptionsCheck(db: pg.ClientBase, input: z.input<typeo
   await db.query("begin isolation level repeatable read read only");
   try {
     const obligations = await db.query(
-      "select id::text, name, cadence, due_day, due_month, pays_from, ended_on::text from obligations where kind = 'subscription' and ended_on is null order by obligations.id",
+      "select id::text, name, cadence, due_day, day_is_estimate, due_month, pays_from, ended_on::text from obligations where kind = 'subscription' order by obligations.id",
     );
     const links = await db.query("select obligation_id::text, merchant from obligation_merchants order by merchant");
     const transactions = await db.query(
@@ -235,7 +286,11 @@ export async function linkSubscriptionMerchant(db: pg.ClientBase, input: unknown
       value.merchant,
     ]);
     if (existing.rows.length && existing.rows[0].obligation_id !== value.obligation_id)
-      throw new InputError("Merchant is already linked to another obligation. Unlink it there first.");
+      throw new InputError(
+        value.action === "unlink"
+          ? `Merchant belongs to obligation ${existing.rows[0].obligation_id}; nothing was unlinked.`
+          : "Merchant is already linked to another obligation. Unlink it there first.",
+      );
     if (value.action === "link")
       await db.query(
         "insert into obligation_merchants(obligation_id, merchant) values ($1,$2) on conflict do nothing",
@@ -246,7 +301,20 @@ export async function linkSubscriptionMerchant(db: pg.ClientBase, input: unknown
         value.obligation_id,
         value.merchant,
       ]);
-    const result = { obligation_id: value.obligation_id, merchant: value.merchant, linked: value.action === "link" };
+    const matching =
+      value.action === "link"
+        ? await db.query("select 1 from transactions where merchant = $1 limit 1", [value.merchant])
+        : null;
+    const result = {
+      obligation_id: value.obligation_id,
+      merchant: value.merchant,
+      linked: value.action === "link",
+      ...(matching && !matching.rows.length
+        ? {
+            warning: `No matching transaction for merchant "${value.merchant}". Link saved; confirm the exact merchant spelling or wait for its first charge.`,
+          }
+        : {}),
+    };
     await db.query("update obligation_merchant_requests set result = $2 where request_id = $1", [
       value.request_id,
       result,
