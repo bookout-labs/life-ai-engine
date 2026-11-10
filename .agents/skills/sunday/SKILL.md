@@ -3,7 +3,7 @@ name: sunday
 description: Sunday procedures for the personal operating system.
 ---
 
-Preview next week's recurring sessions with `preview_weekly_sessions`, ask which sessions are off, then call `add_weekly_sessions` with those skipped pattern/date pairs and reuse its request ID on retries.
+Preview next week's recurring sessions with `preview_weekly_sessions`, ask which sessions are off, then call `add_weekly_sessions` with those skipped pattern/date pairs and reuse its request ID on retries. Then put next week's sessions and games on the Family calendar the way the today procedure writes it, so the calendar matches the schedule records.
 
 Run `node .agents/scripts/weekly.ts` for preparation data from Neon. It defaults to the next Monday, including today when today is Monday. Pass a start date as YYYY-MM-DD to reproduce another week. The JSON includes a seven-day schedule and bills, fourteen days of deadlines plus overdue items, members, relationships, active activities, and loan balances as of the start date. `overloadWeeks` covers the start week and the two after it. Show each overloaded week, its booked evening count, and its booked dates. `upkeep` lists home and car upkeep that is overdue, due in the week, or has no record; show it with its next due date. Undated deadlines and obligations without a billing day have separate lists. Empty lists mean no matching records. Null amounts or balances mean unknown. Unavailable summaries are listed explicitly. The command reads records in one read-only snapshot.
 
