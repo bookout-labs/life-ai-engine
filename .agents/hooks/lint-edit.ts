@@ -11,9 +11,7 @@ const repo = edited.length ? repoRoot(input.cwd ?? process.cwd()) : "";
 const files = edited
   .map((path) => (isAbsolute(path) ? relative(repo, path) : path))
   .filter((path) => !path.startsWith("..") && existsSync(join(repo, path)));
-// The platform binary skips a second Node start; Biome's own launcher covers musl and Windows.
-const native = join(repo, "node_modules", "@biomejs", `cli-${process.platform}-${process.arch}`, "biome");
-const biome = existsSync(native) ? native : join(repo, "node_modules", ".bin", "biome");
+const biome = join(repo, "node_modules", ".bin", "biome");
 
 if (files.length && !existsSync(biome))
   reply("PostToolUse", `Biome isn't installed here, so ${files.join(", ")} went unlinted. Run npm ci.`);
