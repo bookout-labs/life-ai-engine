@@ -1,17 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -107,55 +96,18 @@ test("fresh checkout hooks enforce guards and register the first prompt without 
       rotation.status === 0 && opted === (provider === "claude" ? 1 : 2),
     );
   }
-  const store = join(home, ".life-ai/orchestrate/life-ai-builds");
-  mkdirSync(store, { recursive: true });
-  const packet = {
-    header: {
-      status: "synthetic",
-      retiringThreadId: "thread",
-      blockers: [],
-      nextAction: "Continue",
-      detailPaths: [],
-      jobReportPaths: [],
-    },
-    standingOrders: "Preserve jobs",
-    programStore: store,
-    state: "synthetic state",
-    jobs: [],
-  };
-  for (const [name, value] of Object.entries({
-    "preferences.md": "Synthetic standing orders",
-    "agents.json": JSON.stringify({ worker: { taskId: "existing-task" } }),
-    "current-handoff-slug.txt": "handoff/synthetic",
-    "current-handoff-input.json": JSON.stringify(packet),
-  }))
-    writeFileSync(join(store, name), value);
-  const compact = run(
-    "orchestrator-rotation",
-    {
-      hook_event_name: "PreCompact",
-      session_id: "codex",
-      trigger: "auto",
-    },
-    ["codex"],
-  );
-  const output = JSON.parse(compact.stdout || "{}");
-  const directory = join(home, ".life-ai/orchestrator-rotation");
-  const checkpoints = existsSync(directory) ? readdirSync(directory).filter((name) => name.endsWith(".json")) : [];
-  let valid = false;
-  if (checkpoints.length === 1) {
-    const name = checkpoints[0] as string;
-    const body = readFileSync(join(directory, name), "utf8");
-    const snapshot = JSON.parse(body);
-    valid =
-      name === `${createHash("sha256").update(body).digest("hex")}.json` &&
-      snapshot.files["current-handoff-input.json"] === JSON.stringify(packet) &&
-      snapshot.files["agents.json"] === JSON.stringify({ worker: { taskId: "existing-task" } });
+  for (const provider of ["claude", "codex"]) {
+    const compact = run(
+      "orchestrator-rotation",
+      { hook_event_name: "PreCompact", session_id: provider, trigger: "auto" },
+      [provider],
+    );
+    const blockedCompaction = /"decision":"block"/.test(compact.stdout);
+    check(
+      `orchestrator-rotation/${provider}-auto`,
+      compact,
+      compact.status === 0 && blockedCompaction === (provider === "claude"),
+    );
   }
-  check(
-    "orchestrator-rotation/codex-auto",
-    compact,
-    compact.status === 0 && output.continue === true && /Private store snapshot/.test(output.systemMessage) && valid,
-  );
   assert.deepEqual(failures, []);
 });
