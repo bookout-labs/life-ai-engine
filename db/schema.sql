@@ -216,6 +216,51 @@ ALTER TABLE public.commission_plans ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
 
 
 --
+-- Name: contact_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.contact_links (
+    contact_id uuid NOT NULL,
+    member_id bigint,
+    activity_id bigint,
+    CONSTRAINT contact_links_check CHECK (((member_id IS NULL) <> (activity_id IS NULL)))
+);
+
+
+--
+-- Name: contact_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.contact_requests (
+    request_id uuid NOT NULL,
+    result jsonb NOT NULL
+);
+
+
+--
+-- Name: contacts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.contacts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    role text NOT NULL,
+    organisation text,
+    phone text,
+    email text,
+    address text,
+    notes text,
+    CONSTRAINT contacts_address_check CHECK (((length(address) <= 2000) AND (address ~ '[^[:space:]]'::text))),
+    CONSTRAINT contacts_email_check CHECK (((length(email) <= 254) AND (email ~ '^[^[:space:]@]+@[^[:space:]@.]+[.][^[:space:]@]+$'::text))),
+    CONSTRAINT contacts_name_check CHECK (((length(name) <= 300) AND (name ~ '[^[:space:]]'::text))),
+    CONSTRAINT contacts_notes_check CHECK ((length(notes) <= 4000)),
+    CONSTRAINT contacts_organisation_check CHECK (((length(organisation) <= 300) AND (organisation ~ '[^[:space:]]'::text))),
+    CONSTRAINT contacts_phone_check CHECK (((phone ~ '^[+0-9() .-]+$'::text) AND ((length(regexp_replace(phone, '[^0-9]'::text, ''::text, 'g'::text)) >= 7) AND (length(regexp_replace(phone, '[^0-9]'::text, ''::text, 'g'::text)) <= 20)))),
+    CONSTRAINT contacts_role_check CHECK ((role = ANY (ARRAY['teacher'::text, 'coach'::text, 'doctor'::text, 'dentist'::text, 'vet'::text, 'contractor'::text, 'service_provider'::text, 'neighbor'::text, 'friend'::text, 'other'::text])))
+);
+
+
+--
 -- Name: deadlines; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -919,6 +964,30 @@ ALTER TABLE ONLY public.commission_plans
 
 
 --
+-- Name: contact_links contact_links_contact_id_member_id_activity_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_links
+    ADD CONSTRAINT contact_links_contact_id_member_id_activity_id_key UNIQUE NULLS NOT DISTINCT (contact_id, member_id, activity_id);
+
+
+--
+-- Name: contact_requests contact_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_requests
+    ADD CONSTRAINT contact_requests_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: contacts contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contacts
+    ADD CONSTRAINT contacts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: deadlines deadlines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1222,6 +1291,20 @@ CREATE INDEX commission_plans_effective ON public.commission_plans USING btree (
 
 
 --
+-- Name: contact_links_activity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX contact_links_activity ON public.contact_links USING btree (activity_id) WHERE (activity_id IS NOT NULL);
+
+
+--
+-- Name: contact_links_member; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX contact_links_member ON public.contact_links USING btree (member_id) WHERE (member_id IS NOT NULL);
+
+
+--
 -- Name: gifts_occasion_recipient; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1292,6 +1375,30 @@ ALTER TABLE ONLY public.charges
 
 ALTER TABLE ONLY public.commission_plans
     ADD CONSTRAINT commission_plans_page_slug_fkey FOREIGN KEY (page_slug) REFERENCES public.pages(slug);
+
+
+--
+-- Name: contact_links contact_links_activity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_links
+    ADD CONSTRAINT contact_links_activity_id_fkey FOREIGN KEY (activity_id) REFERENCES public.activities(id);
+
+
+--
+-- Name: contact_links contact_links_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_links
+    ADD CONSTRAINT contact_links_contact_id_fkey FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: contact_links contact_links_member_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_links
+    ADD CONSTRAINT contact_links_member_id_fkey FOREIGN KEY (member_id) REFERENCES public.members(id);
 
 
 --
@@ -1475,4 +1582,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110210000'),
     ('20261110220000'),
     ('20261110230000'),
-    ('20261111010000');
+    ('20261111010000'),
+    ('20261111020000');
