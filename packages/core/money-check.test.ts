@@ -128,7 +128,12 @@ test("database bills and money check agree, and today carries only the money sum
   await db.connect();
   try {
     const schema = await readFile(new URL("../../db/schema.sql", import.meta.url), "utf8");
-    await db.query(schema.replace(/^\\.*$/gm, ""));
+    await db.query(
+      schema
+        .replace(/^\\.*$/gm, "")
+        .replaceAll("CREATE TABLE public.", "CREATE TEMP TABLE public.")
+        .replaceAll("public.", "pg_temp."),
+    );
     await db.query("set search_path to public");
     await db.query(`insert into obligations (name, kind, cadence, due_day, day_is_estimate)
       values ('Synthetic off-day', 'bill', 'monthly', 12, true);
@@ -140,6 +145,20 @@ test("database bills and money check agree, and today carries only the money sum
     assert.deepEqual(
       offDay.money_check.overdue.map((entry) => [entry.due_on, entry.amount]),
       [["2041-01-11", "80.00"]],
+    );
+    await db.query("update obligations set ended_on = '2041-01-10'");
+    await db.query("update charges set due_on = '2041-01-13'");
+    const endedDue = await readMoneyCheck(db, "2041-01-12");
+    assert.deepEqual(
+      endedDue.due_soon.map((bill) => [bill.day, bill.amount]),
+      [["Sun Jan 13", "80.00"]],
+    );
+    assert.deepEqual(endedDue.overdue, []);
+    const endedOverdue = await readMoneyCheck(db, "2041-01-14");
+    assert.deepEqual(endedOverdue.due_soon, []);
+    assert.deepEqual(
+      endedOverdue.overdue.map((entry) => [entry.due_on, entry.amount]),
+      [["2041-01-13", "80.00"]],
     );
     await db.query("truncate charges, obligations restart identity cascade");
     await db.query(`insert into obligations (name, kind, cadence, due_day, day_is_estimate) values
