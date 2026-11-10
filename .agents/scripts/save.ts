@@ -96,7 +96,14 @@ try {
 } catch (err) {
   fail(`Cannot resolve save path: ${err instanceof Error ? err.message : String(err)}`);
 }
-git("-C", root, "add", "-A", "--", ...paths);
+// A path already removed with git rm is staged and gone from disk and the index, so git add would refuse it.
+const present = (path: string) =>
+  lstatSync(join(root, path), { throwIfNoEntry: false }) !== undefined ||
+  git("-C", root, "ls-files", "--", path) !== "";
+for (const path of paths.filter((path) => !present(path)))
+  if (git("-C", root, "diff", "--cached", "--name-only", "--", path) === "") fail(`Nothing to save at ${path}.`);
+const addable = paths.filter(present);
+if (addable.length) git("-C", root, "add", "-A", "--", ...addable);
 const files: string[] = git("diff", "--cached", "--name-only", "--no-renames", "-z").split("\0").filter(Boolean);
 if (files.length === 0) {
   console.log("Nothing to save in those files.");
