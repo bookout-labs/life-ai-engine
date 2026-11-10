@@ -93,7 +93,8 @@ exec ${quote(realGit)} "$@"
     if (command === 'pr merge' && process.env.MERGE_FIXTURE) {
       require('node:child_process').execFileSync(${JSON.stringify(realGit)}, ['--git-dir', ${JSON.stringify(join(dir, "remote"))}, 'fetch', process.cwd(), 'HEAD:refs/heads/main'], {stdio:'pipe'});
     }
-    if (command === 'run list') console.log('https://example.invalid/run/123');
+    if (command === 'run list' && !process.env.NO_SHIP) console.log('123 https://example.invalid/run/123');
+    if (command === 'pr view' && args.includes('mergeCommit')) { console.log('merge-sha-fixture'); process.exit(0); }
     if (command === 'pr list' && process.env.EXISTING) console.log('https://example.invalid/pr/1');
     if (command === 'pr create') console.log('https://example.invalid/pr/1');
     if (command === 'pr view') console.log(JSON.stringify({state:process.env.MERGED ? 'MERGED' : 'OPEN', statusCheckRollup:['check','gate','secrets'].map(name => ({name,status:'COMPLETED',conclusion:process.env.MERGED ? 'SUCCESS' : 'FAILURE'}))}));
@@ -176,27 +177,28 @@ test("check failure carries diagnostic tail", (t) => {
   f.put("docs/note.md", "changed");
   assert.match(f.run({ FAIL_CHECK: "1" }, "docs/", ...args).stderr, /fixture diagnostic tail/);
 });
-test("merge wait leaves production evidence to ship.yml", (t) => {
-  const f = fixture(t);
-  f.put("docs/note.md", "changed");
-  const result = f.run({ MERGED: "1", MERGE_FIXTURE: "1" }, "docs/", ...args);
-  assert.equal(result.status, 0, result.stderr);
-  const calls = readFileSync(join(f.dir, "gh.log"), "utf8");
-  assert.match(calls, /"pr","view"/);
-  assert.doesNotMatch(calls, /"run","watch"/);
-  assert.match(result.stdout, /merged is not done until ship.yml.*passes/i);
-  assert.match(result.stdout, /ship.yml posts.*only on success/);
-  assert.match(result.stdout, /https:\/\/example.invalid\/run\/123/);
-});
-test("merge wait supplies a watch command when ship discovery fails", (t) => {
-  const f = fixture(t);
-  f.put("docs/note.md", "changed");
-  const result = f.run({ MERGED: "1", MERGE_FIXTURE: "1", FAIL_GH: "run list" }, "docs/", ...args);
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /merged is not done until ship.yml.*passes/i);
-  assert.match(result.stdout, /gh run list --workflow ship.yml --commit [0-9a-f]+/);
-  assert.match(result.stdout, /gh run watch/);
-});
+for (const [name, env, status, output] of [
+  ["passes", {}, 0, /Production check passed: https:\/\/example.invalid\/run\/123/],
+  ["fails", { FAIL_GH: "run watch" }, 1, /production check failed: https:\/\/example.invalid\/run\/123/],
+  [
+    "never starts",
+    { NO_SHIP: "1", NODE_OPTIONS: "--require ./fast-timers.cjs" },
+    1,
+    /never started the production check/,
+  ],
+] as const) {
+  test(`production check ${name}`, (t) => {
+    const f = fixture(t);
+    writeFileSync(join(f.repo, "fast-timers.cjs"), "global.setTimeout = (fn) => { fn(); return 0; };");
+    f.put("docs/note.md", "changed");
+    const result = f.run({ MERGED: "1", MERGE_FIXTURE: "1", ...env }, "docs/", ...args);
+    assert.equal(result.status, status, result.stderr);
+    assert.match(result.stdout + result.stderr, output);
+    const calls = readFileSync(join(f.dir, "gh.log"), "utf8");
+    assert.match(calls, /"--commit","merge-sha-fixture"/);
+    if (name !== "never starts") assert.match(calls, /"run","watch","123","--exit-status"/);
+  });
+}
 
 const check = (name: string, status = "COMPLETED", conclusion: string | null = "SUCCESS") => ({
   name,
@@ -450,36 +452,37 @@ test("stale pushed branch can update with dirty edits and re-save without rewrit
   assert.equal(f.git("diff", "--cached", "--name-only"), "docs/note.md");
 });
 
-test("current worktrees stage concurrently into their own indexes", async (t) => {
+test("current worktrees save concurrently to separate remote branches", async (t) => {
   const f = fixture(t);
   const paths = [join(f.dir, "one"), join(f.dir, "two")];
   for (const [index, path] of paths.entries()) {
     f.git("worktree", "add", "-b", `worker-${index}`, path, "origin/main");
-    writeFileSync(join(path, "docs/note.md"), `worker ${index}`);
-    writeFileSync(join(path, "other.md"), `unrelated ${index}`);
+    writeFileSync(join(path, `docs/worker-${index}.md`), `worker ${index}`);
   }
-  const results = await Promise.all(
-    paths.map((cwd) =>
+  await Promise.all(
+    paths.map((cwd, index) =>
       promisify(execFile)(
         process.execPath,
-        [join(cwd, ".agents/scripts/save.ts"), "--work", "LAB.1.81", "-m", "fixture", "docs/note.md"],
-        { cwd, env: f.env, timeout: 20_000 },
-      ).catch((error: unknown) => {
-        assert.ok(error instanceof Error && "stderr" in error && typeof error.stderr === "string");
-        return { stderr: error.stderr };
-      }),
+        [
+          join(cwd, ".agents/scripts/save.ts"),
+          "--work",
+          "LAB.1.81",
+          "-m",
+          "fixture",
+          `docs/worker-${index}.md`,
+          ...args,
+          "--no-wait",
+        ],
+        { cwd, env: { ...f.env, REAL_PUSH: "1" }, timeout: 20_000 },
+      ),
     ),
   );
-  for (const [index, cwd] of paths.entries()) {
-    const result = results[index];
-    assert.ok(result);
-    assert.match(result.stderr, /proof|issue/i);
-    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
-    assert.equal(git("diff", "--cached", "--name-only"), "docs/note.md");
-    assert.equal(git("show", ":docs/note.md"), `worker ${index}`);
-    assert.equal(git("show", ":other.md"), "unrelated");
+  for (const index of [0, 1]) {
+    const remote = (...args: string[]) =>
+      execFileSync("git", ["--git-dir", join(f.dir, "remote"), ...args], { encoding: "utf8" }).trim();
+    assert.equal(remote("diff", "--name-only", "main", `worker-${index}`), `docs/worker-${index}.md`);
+    assert.equal(remote("show", `worker-${index}:docs/worker-${index}.md`), `worker ${index}`);
   }
-  assert.equal(f.git("diff", "--cached", "--name-only"), "");
 });
 
 for (const command of ["fetch", "merge-base"]) {

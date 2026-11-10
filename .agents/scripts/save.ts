@@ -52,14 +52,16 @@ if (!branch || branch === "main") fail("Save from a T3 worktree thread, never fr
 if (spawnSync("git", ["fetch", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*"]).status !== 0)
   fail("git fetch failed. Check origin access, then save again.");
 const remote = `origin/${branch}`;
+// A merge that stops can be continued; a merge that succeeds but conflicts replaying the autostash cannot.
+const update = (ref: string) =>
+  `Run git merge --autostash ${ref}. If the merge stops on conflicts, resolve them and run git merge --continue. If only the autostash replay conflicts, resolve those files; your changes stay in git stash list until you drop them.`;
 const refs = ["origin/main"];
 const exists = spawnSync("git", ["show-ref", "--verify", "--quiet", `refs/remotes/${remote}`]).status;
 if (exists === 0) refs.push(remote);
 else if (exists !== 1) fail("Cannot establish remote branch status.");
 for (const ref of refs) {
   const status = spawnSync("git", ["merge-base", "--is-ancestor", ref, "HEAD"]).status;
-  if (status === 1)
-    fail(`Branch is stale. Run git merge --autostash ${ref}. Resolve conflicts and run git merge --continue.`);
+  if (status === 1) fail(`Branch is stale. ${update(ref)}`);
   if (status !== 0) fail("git merge-base failed. Cannot establish branch freshness.");
 }
 function canonical(path: string): string {
@@ -143,9 +145,7 @@ git("commit", "-m", `${message}\n\n${trailers}`);
 try {
   git("push", "-u", "origin", branch);
 } catch {
-  fail(
-    `Push failed. Fetch origin, run git merge --autostash ${remote}, resolve conflicts and run git merge --continue if needed, then save again.`,
-  );
+  fail(`Push failed. Fetch origin, then ${update(remote)} Then save again.`);
 }
 console.log(`1/3 pushed ${branch}`);
 
@@ -180,15 +180,25 @@ try {
   );
 }
 console.log(`3/3 merged ${pr}`);
-console.log("Merged is not done until ship.yml passes. ship.yml posts evidence on the board issue only on success.");
-const sha = git("rev-parse", "HEAD");
-const ship = spawnSync(
-  "gh",
-  ["run", "list", "--workflow", "ship.yml", "--commit", sha, "--json", "url", "--jq", ".[0].url // empty"],
-  { encoding: "utf8", timeout: 3000, env: { ...process.env, GH_TOKEN: token } },
-);
-console.log(
-  ship.status === 0 && ship.stdout.trim()
-    ? ship.stdout.trim()
-    : `Find ship: gh run list --workflow ship.yml --commit ${sha}; then gh run watch <run-id>`,
-);
+const merged = gh("pr", "view", pr, "--json", "mergeCommit", "--jq", ".mergeCommit.oid");
+const fields = ["--json", "databaseId,url", "--jq", '.[0] | select(.) | "\\(.databaseId) \\(.url)"'];
+for (let i = 0; i < 24; i++) {
+  let run = "";
+  try {
+    run = gh("run", "list", "--workflow", "ship.yml", "--commit", merged, ...fields);
+  } catch {
+    // Retry while GitHub is unavailable or the run has not appeared.
+  }
+  if (run) {
+    const [id = "", url = ""] = run.split(" ");
+    try {
+      gh("run", "watch", id, "--exit-status", "--interval", "5");
+    } catch {
+      fail(`merged, but the production check failed: ${url}. Fix it and save again.`);
+    }
+    console.log(`Production check passed: ${url}. ship.yml posts the evidence on the board issue.`);
+    process.exit(0);
+  }
+  if (i < 23) await new Promise((resolve) => setTimeout(resolve, 5000));
+}
+fail("merged, but GitHub never started the production check (ship.yml).");
