@@ -885,6 +885,44 @@ ALTER TABLE public.upkeep_tasks ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY
 
 
 --
+-- Name: warranties; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.warranties (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    item text NOT NULL,
+    provider text NOT NULL,
+    kind text NOT NULL,
+    purchased_on date NOT NULL,
+    expires_on date,
+    expiry_unknown boolean NOT NULL,
+    cost_cents integer,
+    file_key text,
+    source_ref text,
+    notes text,
+    CONSTRAINT warranties_check CHECK ((((expires_on >= '1900-01-01'::date) AND (expires_on <= '2200-12-31'::date)) AND (expires_on >= purchased_on))),
+    CONSTRAINT warranties_check1 CHECK (((NOT expiry_unknown) OR (expires_on IS NULL))),
+    CONSTRAINT warranties_cost_cents_check CHECK ((cost_cents >= 0)),
+    CONSTRAINT warranties_item_check CHECK (((length(item) <= 2000) AND (item ~ '[^[:space:]]'::text))),
+    CONSTRAINT warranties_kind_check CHECK ((kind = ANY (ARRAY['manufacturer'::text, 'extended'::text, 'service_plan'::text]))),
+    CONSTRAINT warranties_notes_check CHECK ((length(notes) <= 4000)),
+    CONSTRAINT warranties_provider_check CHECK (((length(provider) <= 2000) AND (provider ~ '[^[:space:]]'::text))),
+    CONSTRAINT warranties_purchased_on_check CHECK (((purchased_on >= '1900-01-01'::date) AND (purchased_on <= '2200-12-31'::date))),
+    CONSTRAINT warranties_source_ref_check CHECK (((length(source_ref) <= 2000) AND (source_ref ~ '[^[:space:]]'::text)))
+);
+
+
+--
+-- Name: warranty_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.warranty_requests (
+    request_id uuid NOT NULL,
+    result jsonb NOT NULL
+);
+
+
+--
 -- Name: weekly_occurrences; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1426,6 +1464,30 @@ ALTER TABLE ONLY public.upkeep_tasks
 
 
 --
+-- Name: warranties warranties_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warranties
+    ADD CONSTRAINT warranties_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: warranties warranties_source_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warranties
+    ADD CONSTRAINT warranties_source_ref_key UNIQUE (source_ref);
+
+
+--
+-- Name: warranty_requests warranty_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warranty_requests
+    ADD CONSTRAINT warranty_requests_pkey PRIMARY KEY (request_id);
+
+
+--
 -- Name: weekly_occurrences weekly_occurrences_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1782,6 +1844,14 @@ ALTER TABLE ONLY public.upkeep_completions
 
 
 --
+-- Name: warranties warranties_file_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.warranties
+    ADD CONSTRAINT warranties_file_key_fkey FOREIGN KEY (file_key) REFERENCES public.files(key);
+
+
+--
 -- Name: weekly_occurrences weekly_occurrences_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1847,4 +1917,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261111030000'),
     ('20261111040000'),
     ('20261111050000'),
-    ('20261111060000');
+    ('20261111060000'),
+    ('20261111070000');
