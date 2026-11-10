@@ -20,6 +20,40 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.accounts (
+    id bigint NOT NULL,
+    institution text NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    subtype text,
+    scope text NOT NULL,
+    notes text,
+    CONSTRAINT accounts_institution_check CHECK (((institution = btrim(institution)) AND (institution ~ '\S'::text))),
+    CONSTRAINT accounts_kind_check CHECK ((kind = ANY (ARRAY['bank'::text, 'card'::text, 'investment'::text, 'loan'::text]))),
+    CONSTRAINT accounts_name_check CHECK (((name = btrim(name)) AND (name ~ '\S'::text))),
+    CONSTRAINT accounts_scope_check CHECK ((scope = ANY (ARRAY['household'::text, 'business'::text, 'unknown'::text]))),
+    CONSTRAINT accounts_subtype_check CHECK (((subtype = btrim(subtype)) AND (subtype ~ '\S'::text)))
+);
+
+
+--
+-- Name: accounts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.accounts ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.accounts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: activities; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -45,6 +79,24 @@ ALTER TABLE public.activities ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: budget_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.budget_targets (
+    category text NOT NULL,
+    monthly_min numeric(12,2) NOT NULL,
+    monthly_max numeric(12,2) NOT NULL,
+    status text NOT NULL,
+    is_estimate boolean DEFAULT false NOT NULL,
+    notes text,
+    CONSTRAINT budget_targets_category_check CHECK (((category = btrim(category)) AND (category ~ '\S'::text))),
+    CONSTRAINT budget_targets_check CHECK (((monthly_max >= monthly_min) AND (monthly_max <> 'NaN'::numeric))),
+    CONSTRAINT budget_targets_monthly_min_check CHECK (((monthly_min >= (0)::numeric) AND (monthly_min <> 'NaN'::numeric))),
+    CONSTRAINT budget_targets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'approved'::text])))
 );
 
 
@@ -473,6 +525,22 @@ ALTER TABLE public.workouts ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 
 
 --
+-- Name: accounts accounts_institution_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.accounts
+    ADD CONSTRAINT accounts_institution_name_key UNIQUE (institution, name);
+
+
+--
+-- Name: accounts accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.accounts
+    ADD CONSTRAINT accounts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: activities activities_member_id_activity_season_start_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -486,6 +554,14 @@ ALTER TABLE ONLY public.activities
 
 ALTER TABLE ONLY public.activities
     ADD CONSTRAINT activities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: budget_targets budget_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.budget_targets
+    ADD CONSTRAINT budget_targets_pkey PRIMARY KEY (category);
 
 
 --
@@ -816,4 +892,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261109130000'),
     ('20261109180000'),
     ('20261110000000'),
-    ('20261110120000');
+    ('20261110120000'),
+    ('20261110150000');
