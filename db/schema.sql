@@ -271,6 +271,7 @@ CREATE TABLE public.documents (
     CONSTRAINT documents_kind_check CHECK ((kind = ANY (ARRAY['will'::text, 'durable_power_of_attorney'::text, 'healthcare_directive'::text, 'life_insurance'::text, 'guardianship'::text, 'birth_certificate'::text, 'social_security_card'::text, 'passport'::text]))),
     CONSTRAINT documents_location_check CHECK (((length(location) <= 2000) AND (location ~ '[^[:space:]]'::text))),
     CONSTRAINT documents_notes_check CHECK ((length(notes) <= 4000)),
+    CONSTRAINT documents_ownership_check CHECK (((kind = 'guardianship'::text) = (member_id IS NULL))),
     CONSTRAINT documents_reviewed_on_check CHECK (((reviewed_on >= '1900-01-01'::date) AND (reviewed_on <= '2200-12-31'::date)))
 );
 
@@ -1473,4 +1474,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110200000'),
     ('20261110210000'),
     ('20261110220000'),
-    ('20261110230000');
+    ('20261110230000'),
+    ('20261111010000');

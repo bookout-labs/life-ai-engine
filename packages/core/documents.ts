@@ -1,5 +1,6 @@
 import pg from "pg";
 import { z } from "zod";
+import { InputError } from "./input-error.ts";
 import { today } from "./schedule.ts";
 
 type Database = pg.ClientBase | pg.Pool;
@@ -24,28 +25,42 @@ const rules = [
 }[];
 const kind = z.enum(rules.map((rule) => rule.kind));
 export const documentsCheckSchema = z.object({ as_of: date.optional() });
-export const recordDocumentSchema = z.object({
+const documentFields = z.object({
   request_id: z.uuid().describe("Generate once per write and reuse on retries."),
   kind,
-  member_id: memberId.nullish().describe("Null or omitted covers the household."),
+  member_id: memberId.nullish().describe("Required for personal papers. Null or omitted only for guardianship."),
   location: z.string().trim().min(1).max(2000).nullish().describe("Null or omitted means unknown."),
   file_key: z.string().min(1).nullish(),
   expires_on: date.nullish(),
   reviewed_on: date.nullish(),
   notes: z.string().max(4000).nullish(),
 });
-const documentSchema = recordDocumentSchema.omit({ request_id: true }).required().extend({
+export const recordDocumentSchema = documentFields.superRefine((value, ctx) => {
+  if (value.kind === "guardianship" ? value.member_id != null : value.member_id == null)
+    ctx.addIssue({
+      code: "custom",
+      path: ["member_id"],
+      message:
+        value.kind === "guardianship"
+          ? "guardianship must have a null or omitted member_id"
+          : "member_id is required for personal papers",
+    });
+});
+const storedFields = documentFields.omit({ request_id: true, kind: true, member_id: true }).required().extend({
   id: z.uuid(),
-  member_id: memberId.nullable(),
   location: z.string().nullable(),
   file_key: z.string().nullable(),
   expires_on: date.nullable(),
   reviewed_on: date.nullable(),
   notes: z.string().nullable(),
 });
+const documentSchema = z.discriminatedUnion("kind", [
+  storedFields.extend({ kind: z.literal("guardianship"), member_id: z.null() }),
+  storedFields.extend({ kind: kind.exclude(["guardianship"]), member_id: memberId }),
+]);
 const columns = "id::text, kind, member_id::text, location, file_key, expires_on::text, reviewed_on::text, notes";
 
-export async function recordDocument(db: Database, input: z.input<typeof recordDocumentSchema>) {
+export async function recordDocument(db: Database, input: unknown) {
   const value = recordDocumentSchema.parse(input);
   const pooled = db instanceof pg.Pool ? await db.connect() : undefined;
   const client = pooled ?? db;
@@ -62,6 +77,11 @@ export async function recordDocument(db: Database, input: z.input<typeof recordD
       const document = documentSchema.parse(stored.rows[0]?.result);
       await client.query("commit");
       return { document, already_existed: true };
+    }
+    if (value.member_id != null) {
+      const member = await client.query("select species from members where id = $1", [value.member_id]);
+      if (member.rows[0] && member.rows[0].species !== "human")
+        throw new InputError("Documents can only be recorded for human members.");
     }
     const { rows } = await client.query(
       `insert into documents (kind, member_id, location, file_key, expires_on, reviewed_on, notes)
@@ -153,18 +173,11 @@ export async function documentsCheck(db: Database, input: z.input<typeof documen
           : []
         : rule.needs === "optional"
           ? documents
-              .filter(
-                (doc) =>
-                  doc.kind === rule.kind &&
-                  (doc.member_id === null || members.some((member) => member.id === doc.member_id)),
-              )
+              .filter((doc) => doc.kind === rule.kind && members.some((member) => member.id === doc.member_id))
               .map((doc) => doc.member_id)
           : members.filter((member) => rule.needs === "human" || member.adult === true).map((member) => member.id);
     for (const member_id of targets) {
-      const document =
-        documents.find((doc) => doc.kind === rule.kind && doc.member_id === member_id) ??
-        documents.find((doc) => doc.kind === rule.kind && doc.member_id === null) ??
-        null;
+      const document = documents.find((doc) => doc.kind === rule.kind && doc.member_id === member_id) ?? null;
       requirements.push({ kind: rule.kind, member_id, document, ...assess(document, as_of, rule.window) });
     }
   }
@@ -175,6 +188,8 @@ export async function documentsCheck(db: Database, input: z.input<typeof documen
     as_of,
     members,
     age_unknown: members.filter((member) => member.adult === null),
+    guardianship_need_unknown:
+      !members.some((member) => member.adult === false) && members.some((member) => member.adult === null),
     requirements,
     counts,
     documents: rules.flatMap((rule) =>
