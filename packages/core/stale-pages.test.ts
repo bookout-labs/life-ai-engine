@@ -42,6 +42,44 @@ test("history dates, inline code and links by slug ending do not trigger", () =>
   assert.deepEqual(classifyStalePages(rows, "2040-02-01"), []);
 });
 
+test("broken wiki links retain fragments but omit aliases in their evidence", () => {
+  assert.deepEqual(
+    classifyStalePages([row("projects/source", "project", "[[missing|label]] [[missing#section]]")], "2040-01-01"),
+    [
+      {
+        slug: "projects/source",
+        reasons: [
+          { kind: "broken_link", target: "missing" },
+          { kind: "broken_link", target: "missing#section" },
+        ],
+      },
+    ],
+  );
+});
+
+test("nested page links resolve relative paths and unique names but report ambiguous names", () => {
+  const rows = [
+    row(
+      "projects/nested/source",
+      "project",
+      [
+        "[[./local.md|label]] [[../sibling#section]] [[unique]]",
+        "[[wiki/areas/unique.md#section|label]] [[#section]] [[]]",
+        "`areas/unique.md` `projects/local.md` [[shared]] [[shared|another label]]",
+      ].join("\n"),
+    ),
+    row("projects/nested/local"),
+    row("projects/sibling"),
+    row("projects/nested/projects/local"),
+    row("areas/unique", "area"),
+    row("areas/shared", "area"),
+    row("people/shared", "person"),
+  ];
+  assert.deepEqual(classifyStalePages(rows, "2040-01-01"), [
+    { slug: "projects/nested/source", reasons: [{ kind: "broken_link", target: "shared" }] },
+  ]);
+});
+
 test("recent and invalid dates, frontmatter, and log pages do not trigger", () => {
   const rows = [
     row("p", "project", "---\ncreated: 2030-01-01\n---\n# State (2040-01-02)\n# Bad 2039-02-30", "2040-02-01"),

@@ -1,5 +1,6 @@
 import type pg from "pg";
 import type { Page } from "./pages.ts";
+import { resolveLink } from "./wiki-links.ts";
 
 export type StalePageRow = Pick<Page, "slug" | "type" | "body" | "updated_at" | "deleted_at">;
 type StaleReason =
@@ -18,9 +19,7 @@ const day = 86_400_000;
 
 export function classifyStalePages(rows: StalePageRow[], asOf: string): StalePage[] {
   const now = Date.parse(`${asOf}T00:00:00Z`);
-  const live = rows.filter((row) => !row.deleted_at).map((row) => row.slug);
-  // Wiki links name a page by its slug or by the slug's last segment, as in [[people/x]] or [[x]].
-  const targets = new Set([...live, ...live.map((slug) => slug.slice(slug.lastIndexOf("/") + 1))]);
+  const slugs = new Set(rows.filter((row) => !row.deleted_at).map((row) => row.slug));
   return rows.flatMap((row) => {
     if (row.deleted_at || row.type === "daily" || row.type === "weekly" || row.slug.startsWith("handoff/")) return [];
     const limit = limits.get(row.type) ?? 90;
@@ -44,10 +43,10 @@ export function classifyStalePages(rows: StalePageRow[], asOf: string): StalePag
     }
     const missing = new Set<string>();
     for (const match of body.matchAll(
-      /\[\[([a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)\]\]|`((?:areas|projects|people|inbox)\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)(?:\.md)?`/g,
+      /\[\[([^\]]*)\]\]|`((?:areas|projects|people|inbox)\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)(?:\.md)?`/g,
     )) {
       const target = match[1] ?? match[2];
-      if (target && !targets.has(target)) missing.add(target);
+      if (target !== undefined && !resolveLink(target, row.slug, slugs)) missing.add(target.split("|")[0] ?? "");
     }
     for (const target of missing) reasons.push({ kind: "broken_link", target });
     return reasons.length ? [{ slug: row.slug, reasons }] : [];
