@@ -11,29 +11,44 @@ export type Bill = {
 };
 export type Deadline = { due_on: string; item: string; action: string; overdue: boolean };
 
-// Each recorded charge claims its nearest scheduled date; only unclaimed dates are projected.
+// Charges and scheduled dates can each belong to only one matched pair.
 export async function billsDue(db: pg.ClientBase | pg.Pool, from: string, days: number): Promise<Bill[]> {
+  type Pair = { charge: number; obligation: number; day: string };
+  const { rows: pairs } = await db.query<Pair>(
+    `select c.id as charge, o.id as obligation, to_char(scheduled.day, 'YYYY-MM-DD') as day
+       from obligations o join charges c on c.obligation_id = o.id
+       cross join generate_series(-1, 1) as candidate(n)
+       cross join lateral (
+         select case o.cadence
+           when 'monthly' then date_trunc('month', c.due_on) + candidate.n * interval '1 month'
+           else date_trunc('year', c.due_on) + candidate.n * interval '1 year'
+             + (o.due_month - 1) * interval '1 month'
+         end as start
+       ) month
+       cross join lateral (
+         select month.start::date + least(o.due_day,
+           extract(day from month.start + interval '1 month - 1 day')::int) - 1 as day
+       ) scheduled
+      where o.due_day is not null
+        and c.due_on >= $1::date - interval '1 year'
+        and c.due_on < $1::date + $2::int + interval '1 year'
+      -- Midpoint ties favor keeping the upcoming bill visible.
+      order by abs(scheduled.day - c.due_on), scheduled.day asc, c.id`,
+    [from, days],
+  );
+  const charges = new Set<number>();
+  const dates = new Set<string>();
+  const claimed: Pair[] = [];
+  for (const pair of pairs) {
+    const key = `${pair.obligation}/${pair.day}`;
+    if (charges.has(pair.charge) || dates.has(key)) continue;
+    charges.add(pair.charge);
+    dates.add(key);
+    claimed.push(pair);
+  }
   const { rows } = await db.query<Bill>(
     `with recorded as (
-       select c.*, nearest.day as scheduled_on
-         from charges c join obligations o on o.id = c.obligation_id
-         cross join lateral (
-           select scheduled.day
-             from generate_series(-1, 1) as candidate(n)
-             cross join lateral (
-               select case o.cadence
-                 when 'monthly' then date_trunc('month', c.due_on) + candidate.n * interval '1 month'
-                 else date_trunc('year', c.due_on) + candidate.n * interval '1 year'
-                   + (o.due_month - 1) * interval '1 month'
-               end as start
-             ) month
-             cross join lateral (
-               select month.start::date + least(o.due_day,
-                 extract(day from month.start + interval '1 month - 1 day')::int) - 1 as day
-             ) scheduled
-            -- A midpoint charge claims the upcoming bill rather than the previous one.
-            order by abs(scheduled.day - c.due_on), scheduled.day desc limit 1
-         ) nearest
+       select c.* from charges c join obligations o on o.id = c.obligation_id
         where o.due_day is not null
      ), bills as (
        select c.due_on as day, o.name, o.pays_from, o.day_is_estimate, c.amount, c.amount_is_estimate
@@ -54,14 +69,14 @@ export async function billsDue(db: pg.ClientBase | pg.Pool, from: string, days: 
             order by due_on desc limit 1
          ) last on true
         where not exists (
-          select 1 from recorded c
-           where c.obligation_id = o.id and c.scheduled_on = d.day::date
+          select 1 from unnest($3::int[], $4::date[]) as claimed(obligation, day)
+           where claimed.obligation = o.id and claimed.day = d.day::date
         )
      )
      select to_char(day, 'Dy Mon DD') as day, name, pays_from, day_is_estimate,
             amount::text, amount_is_estimate
        from bills order by bills.day, name`,
-    [from, days],
+    [from, days, claimed.map((pair) => pair.obligation), claimed.map((pair) => pair.day)],
   );
   return rows;
 }
