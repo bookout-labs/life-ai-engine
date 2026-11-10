@@ -15,6 +15,7 @@ import * as z from "zod";
 import { payoffExplorer, payoffInputSchema } from "../../packages/core/amortize.ts";
 import { billsDue, deadlinesDue } from "../../packages/core/bills.ts";
 import { accounts, budgetTargets } from "../../packages/core/finances.ts";
+import { activeGoals, recordGoal, recordGoalSchema } from "../../packages/core/goals.ts";
 import { investmentBuys } from "../../packages/core/investment-buys.ts";
 import { logWorkout, logWorkoutSchema } from "../../packages/core/log-workout.ts";
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
@@ -124,6 +125,28 @@ function tools(env: Env): McpServer {
     async (input) => ({
       content: [{ type: "text", text: JSON.stringify(await withDb(env, (db) => payoffExplorer(db, input))) }],
     }),
+  );
+  server.registerTool(
+    "goals",
+    {
+      description:
+        "Read active goals grouped by area, with optional numeric targets, due dates and plan page links. An empty list means no active goals recorded. Progress and cadence live in the linked plan pages.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => ({
+      content: [{ type: "text", text: JSON.stringify(await withDb(env, activeGoals)) }],
+    }),
+  );
+  server.registerTool(
+    "record_goal",
+    {
+      description:
+        "Create an active goal linked to an existing plan page. An optional measure pairs a decimal-string target with its unit. Generate request_id once per goal and reuse it on retries. A reused ID returns the stored goal without changing it.",
+      inputSchema: recordGoalSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => writeResult(env, (db) => recordGoal(db, input)),
   );
   server.registerTool(
     "page_read",

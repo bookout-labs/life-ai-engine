@@ -209,6 +209,44 @@ CREATE TABLE public.files (
 
 
 --
+-- Name: goals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.goals (
+    id bigint NOT NULL,
+    request_id uuid NOT NULL,
+    area text NOT NULL,
+    title text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    target numeric,
+    unit text,
+    due_on date,
+    page_slug text NOT NULL,
+    CONSTRAINT goals_area_check CHECK (((area = btrim(area)) AND (area ~ '\S'::text) AND (char_length(area) <= 80))),
+    CONSTRAINT goals_check CHECK (((target IS NULL) = (unit IS NULL))),
+    CONSTRAINT goals_due_on_check CHECK (isfinite(due_on)),
+    CONSTRAINT goals_status_check CHECK ((status = ANY (ARRAY['active'::text, 'done'::text, 'dropped'::text]))),
+    CONSTRAINT goals_target_check CHECK ((target <> ALL (ARRAY['NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric]))),
+    CONSTRAINT goals_title_check CHECK (((title = btrim(title)) AND (title ~ '\S'::text))),
+    CONSTRAINT goals_unit_check CHECK (((unit = btrim(unit)) AND (unit ~ '\S'::text)))
+);
+
+
+--
+-- Name: goals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.goals ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.goals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: investment_buys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -623,6 +661,22 @@ ALTER TABLE ONLY public.files
 
 
 --
+-- Name: goals goals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.goals
+    ADD CONSTRAINT goals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: goals goals_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.goals
+    ADD CONSTRAINT goals_request_id_key UNIQUE (request_id);
+
+
+--
 -- Name: investment_buys investment_buys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -767,6 +821,13 @@ ALTER TABLE ONLY public.workouts
 
 
 --
+-- Name: goals_active_area_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX goals_active_area_idx ON public.goals USING btree (area, id) WHERE (status = 'active'::text);
+
+
+--
 -- Name: page_revisions_history; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -825,6 +886,14 @@ ALTER TABLE ONLY public.events
 
 ALTER TABLE ONLY public.files
     ADD CONSTRAINT files_source_page_id_fkey FOREIGN KEY (source_page_id) REFERENCES public.pages(id);
+
+
+--
+-- Name: goals goals_page_slug_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.goals
+    ADD CONSTRAINT goals_page_slug_fkey FOREIGN KEY (page_slug) REFERENCES public.pages(slug);
 
 
 --
@@ -912,4 +981,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110000000'),
     ('20261110120000'),
     ('20261110150000'),
-    ('20261110160000');
+    ('20261110160000'),
+    ('20261110170000');
