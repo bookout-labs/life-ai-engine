@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { z } from "zod";
 import { billsDue, deadlinesDue } from "./bills.ts";
+import { overloadWeeks } from "./overload.ts";
 import { schedule } from "./schedule.ts";
 
 export function weeklyWindow(from: string) {
@@ -71,6 +72,7 @@ export async function weekly(db: pg.ClientBase | pg.Pool, from: string) {
   );
   return {
     window,
+    overloadWeeks: await overloadWeeks(db, from),
     bills,
     deadlines,
     events,
