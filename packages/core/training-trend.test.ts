@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { summarizeTraining } from "./training-trend.ts";
+import { Client } from "pg";
+import { summarizeTraining, trainingTrend, trainingTrendSchema } from "./training-trend.ts";
+import type { Workout } from "./workouts.ts";
 
 test("empty history retains zero weeks and marks the current week partial", () => {
   const result = summarizeTraining([], { asOf: "2040-01-18", weeks: 2 });
@@ -13,11 +16,6 @@ test("empty history retains zero weeks and marks the current week partial", () =
   );
   assert.deepEqual(result.flags, []);
 });
-
-import { readFile } from "node:fs/promises";
-import { Client } from "pg";
-import { trainingTrend, trainingTrendSchema } from "./training-trend.ts";
-import type { Workout } from "./workouts.ts";
 
 function session(day: string, patch: Partial<Workout["blocks"][number]> = {}, kind = "strength"): Workout {
   return {
@@ -73,7 +71,7 @@ test("totals combine known blocks and mixed weight units, preserve unknowns, and
   assert.ok(row);
   assert.equal(row.sessions, 4);
   assert.equal(row.duration_seconds, 600);
-  assert.equal(row.volume_kg, 145.359237);
+  assert.equal(row.volume_kg, 145.36);
   assert.equal(row.timed_blocks, 1);
   assert.equal(row.loaded_blocks, 2);
   assert.equal(row.blocks, 3);
@@ -175,8 +173,10 @@ test("wrapper reads inclusive dates and blocks from PostgreSQL without writing",
   const migration = await readFile(new URL("../../db/migrations/20261110000000_workouts.sql", import.meta.url), "utf8");
   const [up, down] = migration.split("-- migrate:down");
   assert.ok(up && down);
+  let migrated = false;
   try {
     await db.query(up);
+    migrated = true;
     await db.query(`insert into workouts (performed_on, kind) values
       ('2040-01-01', 'strength'), ('2040-01-02', 'strength'), ('2040-01-08', 'conditioning'), ('2040-01-09', 'strength');
       insert into workout_blocks (workout_id, position, name, sets, reps, weight, weight_unit, duration_seconds)
@@ -189,10 +189,54 @@ test("wrapper reads inclusive dates and blocks from PostgreSQL without writing",
     assert.equal(result.weeks[0]?.volume_kg, 100);
     assert.equal(result.weeks[0]?.by_kind.conditioning?.sessions, 1);
     assert.deepEqual(result.flags, []);
+    assert.equal((await trainingTrend(db, { asOf: "2040-01-08" })).weeks.length, 8);
     await db.query("rollback");
+    await db.query("delete from workouts");
+    await db.query(`insert into workouts (performed_on, kind)
+      select d::date, 'strength' from generate_series('2040-01-17'::date, '2040-01-25'::date, '1 day') d`);
+    const crossing = await trainingTrend(db, { asOf: "2040-01-30", weeks: 2 });
+    assert.equal(crossing.flags.find((f) => f.kind === "no_rest")?.consecutive_days, 9);
+    assert.equal(
+      crossing.weeks.reduce((sum, w) => sum + w.sessions, 0),
+      3,
+    );
   } finally {
     await db.query("rollback");
-    await db.query(down);
+    if (migrated) await db.query(down);
     await db.end();
+  }
+});
+
+test("a run crossing the window start is counted", () => {
+  const sessions = Array.from({ length: 9 }, (_, i) => session(`2040-01-${String(17 + i).padStart(2, "0")}`));
+  const result = summarizeTraining(sessions, { asOf: "2040-01-30", weeks: 2 });
+  const flag = result.flags.find((f) => f.kind === "no_rest");
+  assert.ok(flag && flag.kind === "no_rest");
+  assert.equal(flag.consecutive_days, 9);
+});
+
+test("reported pound volumes are rounded", () => {
+  const result = summarizeTraining(
+    [session("2040-01-23", { weight: "135", weight_unit: "lb", sets: 3, reps: 10 })],
+    options,
+  );
+  assert.equal(result.weeks[3]?.volume_kg, 1837.05);
+  assert.equal(result.weeks[3]?.by_kind.strength?.volume_kg, 1837.05);
+});
+
+test("a missing rep count does not contribute loaded volume", () => {
+  const row = summarizeTraining([session("2040-01-23", { reps: null })], options).weeks[3];
+  assert.equal(row?.volume_kg, null);
+  assert.equal(row?.loaded_blocks, 0);
+});
+
+test("a drop from three sessions flags one but not two", () => {
+  const steady = baseline.flatMap((s) => [s, { ...s, id: s.id + "b" }, { ...s, id: s.id + "c" }]);
+  for (const count of [1, 2]) {
+    const tail = Array.from({ length: count }, (_, i) => ({ ...session("2040-01-23"), id: String(i) }));
+    assert.equal(
+      summarizeTraining([...steady, ...tail], options).flags.some((f) => f.kind === "sharp_drop"),
+      count === 1,
+    );
   }
 });
