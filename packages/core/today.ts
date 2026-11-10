@@ -4,6 +4,7 @@ import { billsDue, deadlinesDue } from "./bills.ts";
 import { MONEY_CHECK_DAYS, moneyCheckSchema, readMoneyCheck } from "./money-check.ts";
 import { pageList, slugSchema } from "./pages.ts";
 import { schedule } from "./schedule.ts";
+import { upkeepDue, upkeepSchema } from "./upkeep.ts";
 
 const pageSchema = z.object({ slug: slugSchema, type: z.string(), body: z.string() });
 const membersSchema = z.array(z.object({ name: z.string(), species: z.string(), born: z.iso.date().nullable() }));
@@ -25,6 +26,7 @@ const fixtureSchema = z.object({
   ),
   deadlines: z.array(z.object({ due_on: z.string(), item: z.string(), action: z.string(), overdue: z.boolean() })),
   pages: z.array(pageSchema),
+  upkeep: z.array(upkeepSchema).optional(),
   money_check: moneyCheckSchema.omit({ due_soon: true }).optional(),
 });
 const windows = { events: 7, bills: MONEY_CHECK_DAYS, deadlines: 14 };
@@ -48,6 +50,7 @@ export function buildToday(input: unknown) {
     bills: data.bills,
     ...(data.money_check ? { money_check: data.money_check } : {}),
     deadlines: data.deadlines,
+    ...(data.upkeep ? { upkeep: data.upkeep } : {}),
     context: pages.filter((p) => ["person", "area", "project"].includes(p.type)),
     previousDaily: daily.filter((p) => p.slug < dailySlug).at(-1) ?? null,
     currentDaily: daily.find((p) => p.slug === dailySlug) ?? null,
@@ -68,6 +71,7 @@ export async function readToday(db: pg.ClientBase, now = new Date().toISOString(
       members: members.rows,
       events: await schedule(db, date, windows.events),
       bills,
+      upkeep: await upkeepDue(db, date, 7),
       money_check: await readMoneyCheck(db, date, bills),
       deadlines: await deadlinesDue(db, date, windows.deadlines),
       pages: await pageList(db),

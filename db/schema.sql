@@ -522,6 +522,75 @@ CREATE TABLE public.transactions (
 
 
 --
+-- Name: upkeep_completions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upkeep_completions (
+    id bigint NOT NULL,
+    request_id uuid NOT NULL,
+    task_id bigint NOT NULL,
+    completed_on date NOT NULL,
+    notes text,
+    CONSTRAINT upkeep_completions_completed_on_check CHECK (((completed_on >= '1900-01-01'::date) AND (completed_on <= '2200-12-31'::date)))
+);
+
+
+--
+-- Name: upkeep_completions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.upkeep_completions ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.upkeep_completions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: upkeep_tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.upkeep_tasks (
+    id bigint NOT NULL,
+    name text NOT NULL,
+    category text NOT NULL,
+    interval_months smallint,
+    yearly_month smallint,
+    yearly_day smallint,
+    notes text,
+    CONSTRAINT upkeep_schedule CHECK ((((interval_months IS NOT NULL) AND (yearly_month IS NULL) AND (yearly_day IS NULL)) OR ((interval_months IS NULL) AND (yearly_month IS NOT NULL) AND (yearly_day IS NOT NULL) AND ((yearly_month >= 1) AND (yearly_month <= 12)) AND ((yearly_day >= 1) AND (yearly_day <=
+CASE yearly_month
+    WHEN 2 THEN 29
+    WHEN 4 THEN 30
+    WHEN 6 THEN 30
+    WHEN 9 THEN 30
+    WHEN 11 THEN 30
+    ELSE 31
+END))))),
+    CONSTRAINT upkeep_tasks_category_check CHECK ((category = ANY (ARRAY['home'::text, 'vehicle'::text]))),
+    CONSTRAINT upkeep_tasks_interval_months_check CHECK ((interval_months > 0)),
+    CONSTRAINT upkeep_tasks_name_check CHECK (((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 200)))
+);
+
+
+--
+-- Name: upkeep_tasks_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.upkeep_tasks ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.upkeep_tasks_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: workout_blocks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -822,6 +891,30 @@ ALTER TABLE ONLY public.transactions
 
 
 --
+-- Name: upkeep_completions upkeep_completions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upkeep_completions
+    ADD CONSTRAINT upkeep_completions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: upkeep_completions upkeep_completions_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upkeep_completions
+    ADD CONSTRAINT upkeep_completions_request_id_key UNIQUE (request_id);
+
+
+--
+-- Name: upkeep_tasks upkeep_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upkeep_tasks
+    ADD CONSTRAINT upkeep_tasks_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: workout_blocks workout_blocks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -879,6 +972,13 @@ CREATE INDEX pages_search ON public.pages USING gin (search) WHERE (deleted_at I
 --
 
 CREATE INDEX transactions_posted_on_idx ON public.transactions USING btree (posted_on);
+
+
+--
+-- Name: upkeep_completions_latest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX upkeep_completions_latest ON public.upkeep_completions USING btree (task_id, completed_on DESC);
 
 
 --
@@ -993,6 +1093,14 @@ ALTER TABLE ONLY public.relationships
 
 
 --
+-- Name: upkeep_completions upkeep_completions_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.upkeep_completions
+    ADD CONSTRAINT upkeep_completions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.upkeep_tasks(id);
+
+
+--
 -- Name: workout_blocks workout_blocks_workout_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1023,4 +1131,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261110150000'),
     ('20261110160000'),
     ('20261110170000'),
-    ('20261110180000');
+    ('20261110180000'),
+    ('20261110190000');
