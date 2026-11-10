@@ -14,6 +14,7 @@ import pg from "pg";
 import * as z from "zod";
 import { payoffExplorer, payoffInputSchema } from "../../packages/core/amortize.ts";
 import { billsDue, deadlinesDue } from "../../packages/core/bills.ts";
+import { accounts, budgetTargets } from "../../packages/core/finances.ts";
 import { investmentBuys } from "../../packages/core/investment-buys.ts";
 import { fileRead, pageRead, pageSearch, pageWrite, pageWriteSchema, slugSchema } from "../../packages/core/pages.ts";
 import { schedule, today } from "../../packages/core/schedule.ts";
@@ -64,6 +65,21 @@ function tools(env: Env): McpServer {
       const result = await withDb(env, async (db) => ({
         bills: await billsDue(db, from, days),
         deadlines: await deadlinesDue(db, from, days),
+      }));
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    },
+  );
+  server.registerTool(
+    "finance_records",
+    {
+      description:
+        "Read account records and recurring monthly budget targets in USD. Draft targets are proposals, not agreed limits. Empty lists mean no records loaded, not zero spending. Amounts are decimal strings; equal bounds mean an exact target.",
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const result = await withDb(env, async (db) => ({
+        accounts: await accounts(db),
+        budgetTargets: await budgetTargets(db),
       }));
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },
