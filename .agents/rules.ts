@@ -56,23 +56,6 @@ export const RULES: Rule[] = [
     },
   },
   {
-    id: "unsaved",
-    rule: "The next prompt receives a reminder of unchanged files left unsaved.",
-    trigger: "user prompt",
-    route: {
-      kind: "hook",
-      file: ".agents/hooks/turn-start.ts",
-      event: "UserPromptSubmit",
-      tools: { claude: [], codex: [] },
-    },
-  },
-  {
-    id: "snapshot",
-    rule: "Track changes left unsaved at the end of a reply.",
-    trigger: "reply ends",
-    route: { kind: "hook", file: ".agents/hooks/stop-check.ts", event: "Stop", tools: { claude: [], codex: [] } },
-  },
-  {
     id: "gate",
     rule: "Code saves require an open board issue, production proof and current cross-family review; system saves require issue and review.",
     trigger: "pull request",

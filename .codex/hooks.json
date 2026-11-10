@@ -37,15 +37,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.agents/hooks/turn-start.ts\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel)\"/.agents/hooks/orchestrator-rotation.ts codex",
             "timeout": 10
           }
@@ -65,15 +56,6 @@
       }
     ],
     "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$(git rev-parse --show-toplevel)/.agents/hooks/stop-check.ts\"",
-            "timeout": 10
-          }
-        ]
-      },
       {
         "hooks": [
           {

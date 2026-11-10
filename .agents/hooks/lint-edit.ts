@@ -2,8 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
-import { repoRoot } from "./changes.ts";
-import { editedPaths, readHookInput, reply } from "./edits.ts";
+import { editedPaths, readHookInput, reply, repoRoot } from "./edits.ts";
 
 const input = readHookInput();
 const edited = editedPaths(input.tool_input).filter((path) => path.endsWith(".ts"));

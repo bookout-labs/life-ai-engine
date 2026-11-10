@@ -1,4 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+
+// From the hook's cwd, never CLAUDE_PROJECT_DIR, which a parent agent can leak into a worktree subagent.
+export function repoRoot(cwd: string): string {
+  return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+}
 
 export type HookInput = { session_id?: string; cwd?: string; tool_input?: unknown };
 
