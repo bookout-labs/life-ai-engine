@@ -300,3 +300,97 @@ test("integer arithmetic stays exact at the input limit", () => {
     [2_999_700_000_000, 6_000_300_000_000],
   );
 });
+
+test("MCP reports caller-fixable commission plan errors", {
+  skip: !process.env.COMMISSION_TEST_DATABASE_URL,
+}, async () => {
+  const { registerHooks } = await import("node:module");
+  const { readFile } = await import("node:fs/promises");
+  const { createMcpHandler } = await import("@modelcontextprotocol/server");
+  const { default: pg } = await import("pg");
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "cloudflare:workers")
+        return {
+          url: 'data:text/javascript,export const env = {PUBLIC_ORIGIN: "https://synthetic.test"}; export class WorkerEntrypoint {}',
+          shortCircuit: true,
+        };
+      return nextResolve(specifier, context);
+    },
+  });
+  const { tools, writeResult } = await import(new URL("../../apps/mcp/worker.ts", import.meta.url).href);
+  hooks.deregister();
+  const db = new pg.Client({ connectionString: process.env.COMMISSION_TEST_DATABASE_URL });
+  await db.connect();
+  const namespace = `commission_${crypto.randomUUID().replaceAll("-", "")}`;
+  try {
+    await db.query(`create schema ${namespace}`);
+    await db.query(`set search_path to ${namespace}`);
+    for (const name of [
+      "20261108230000_obligations_charges_deadlines_loans",
+      "20261109120000_pages_files",
+      "20261110150000_accounts_budget_targets",
+      "20261110200000_commission_plans",
+    ]) {
+      const sql = await readFile(new URL(`../../db/migrations/${name}.sql`, import.meta.url), "utf8");
+      await db.query(sql.split("-- migrate:down")[0] ?? "");
+    }
+    const url = new URL(process.env.COMMISSION_TEST_DATABASE_URL ?? "");
+    url.searchParams.set("options", `-c search_path=${namespace}`);
+    const call = async (rules: unknown[]) => {
+      const response = await createMcpHandler(() =>
+        tools({ HYPERDRIVE: { connectionString: url.toString() } } as never),
+      ).fetch(
+        new Request("https://synthetic.test/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "record_commission_plan",
+              arguments: {
+                request_id: crypto.randomUUID(),
+                effective_on: "2040-01-01",
+                page_slug: "projects/missing",
+                rules,
+              },
+            },
+          }),
+        }),
+      );
+      const text = await response.text();
+      const payload = JSON.parse(text.startsWith("{") ? text : (text.match(/^data: (.*)$/m)?.[1] ?? ""));
+      return payload.result;
+    };
+    const missing = await call([{ bucket: "taxes", kind: "remainder", destination: { kind: "account", id: "7" } }]);
+    assert.equal(missing.isError, true);
+    assert.equal(missing.content[0].text, "Destination account 7 for bucket taxes not found");
+    const page = await call([{ bucket: "Rest", kind: "remainder" }]);
+    assert.equal(page.isError, true);
+    assert.equal(page.content[0].text, "Plan page projects/missing not found");
+    assert.equal((await db.query("select count(*)::int as count from commission_plans")).rows[0].count, 0);
+    const env = { HYPERDRIVE: { connectionString: url.toString() } } as never;
+    const { z } = await import("zod");
+    const unexpected = await writeResult(env, async () => {
+      throw new Error("private detail");
+    });
+    assert.equal(unexpected.content[0]?.text, "Could not save the record.");
+    const invalid = await writeResult(env, async () => z.string().parse(42));
+    assert.equal(invalid.content[0]?.text, "Invalid input: expected string, received number");
+    const constraint = await writeResult(env, async (client: import("pg").Client) => {
+      await client.query(
+        "create temporary table constraint_fixture (value int constraint fixture_check check (value > 0))",
+      );
+      await client.query("insert into constraint_fixture values (0)");
+    });
+    assert.equal(
+      constraint.content[0]?.text,
+      "Record rejected by database constraint fixture_check. Check the input fields.",
+    );
+  } finally {
+    await db.query(`drop schema ${namespace} cascade`);
+    await db.end();
+  }
+});

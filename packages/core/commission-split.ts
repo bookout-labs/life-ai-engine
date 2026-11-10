@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { z } from "zod";
+import { InputError } from "./input-error.ts";
 import { slugSchema } from "./pages.ts";
 
 const cents = z.number().int().min(0).max(9_000_000_000_000);
@@ -60,7 +61,7 @@ export function computeCommissionSplit(input: z.input<typeof commissionSplitSche
     };
   const rules = rulesSchema.parse(rawRules);
   if (new Set(balances.map((b) => b.bucket)).size !== balances.length)
-    throw new Error("Provide only one balance per bucket");
+    throw new InputError("Provide only one balance per bucket");
   const missing = rules.filter(
     (r) => r.kind === "fill" && !balances.some((b) => b.bucket === r.bucket && b.as_of === on),
   );
@@ -89,7 +90,7 @@ export function computeCommissionSplit(input: z.input<typeof commissionSplitSche
         break;
       case "fill": {
         const balance = balances.find((b) => b.bucket === rule.bucket && b.as_of === on);
-        if (!balance) throw new Error("Fill balance missing");
+        if (!balance) throw new InputError("Fill balance missing");
         const gap = BigInt(rule.target_cents) - BigInt(balance.balance_cents);
         requested = gap < 0n ? 0n : gap > BigInt(rule.cap_cents) ? BigInt(rule.cap_cents) : gap;
         reason = `Fill to ${rule.target_cents} cents, capped at ${rule.cap_cents} cents using the supplied balance on ${on}`;
@@ -131,12 +132,12 @@ export async function recordCommissionPlan(
       rule.destination.id,
     ]);
     if (!found.rows.length)
-      throw new Error(
+      throw new InputError(
         `Destination ${rule.destination.kind} ${rule.destination.id} for bucket ${rule.bucket} not found`,
       );
   }
   const page = await db.query("select slug from pages where slug = $1 and deleted_at is null", [plan.page_slug]);
-  if (!page.rows.length) throw new Error(`Plan page ${plan.page_slug} not found`);
+  if (!page.rows.length) throw new InputError(`Plan page ${plan.page_slug} not found`);
 
   const { rows } = await db.query(
     `insert into commission_plans (request_id, effective_on, page_slug, rules) values ($1, $2, $3, $4)
