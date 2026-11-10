@@ -17,14 +17,18 @@ function fixture(t: TestContext, options: Record<string, string> = {}) {
   script(
     "gh",
     `const fs=require('node:fs');const a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(join(dir, "calls"))},JSON.stringify(a)+'\\n');
-    if(a[0]==='api' && a[1].endsWith('/reviews')) console.log(JSON.stringify([[{user:{login:'chatgpt-codex-connector[bot]'},commit_id:process.env.OLD?'old':'head',id:12,body:'Reviewed'}]]));
-    else if(a[0]==='api' && a[1].endsWith('/reviews/12/comments')) console.log(JSON.stringify([process.env.BLOCK?[{path:'a.ts',line:null,body:'[P0] bug'}]:[]]));
-    else if(a[0]==='api' && a[1].endsWith('/comments')) console.log('[[]]');
-    else if(a[0]==='api') console.log(process.env.FOREIGN?'notes.md':'package.json');
+    if(a[0]==='api') console.log(process.env.FOREIGN?'notes.md':'package.json');
     else if(a[0]==='issue'&&a[1]==='view') console.log(JSON.stringify({state:process.env.CLOSED?'CLOSED':'OPEN',title:'Synthetic issue',body:'Synthetic acceptance',comments:process.env.ROUNDS?Array(3).fill({body:'Review blocked (round 1/3)'}):[]}));`,
   );
-  script("claude", `console.log(JSON.stringify({structured_output:{summary:'Reviewed',findings:[]}}));`);
-  const result = spawnSync(process.execPath, [join(import.meta.dirname, "gate.ts"), "0"], {
+  script(
+    "claude",
+    `if(process.env.CLAUDE_DOWN) process.exit(1);console.log(JSON.stringify({structured_output:{summary:'Reviewed',findings:[]}}));`,
+  );
+  script(
+    "codex",
+    `if(process.env.CODEX_DOWN) process.exit(1);const a=process.argv;require('node:fs').writeFileSync(a[a.indexOf('-o')+1],JSON.stringify({summary:'Reviewed',findings:process.env.BLOCK?[{priority:0,title:'bug',file:'a.ts',line:1,body:'b'}]:[]}));`,
+  );
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, "gate.ts")], {
     encoding: "utf8",
     timeout: 10000,
     env: {
@@ -48,7 +52,7 @@ for (const options of [
   { BODY: "Board: #96" },
   { DIFF: "+synthetic-private-marker" },
   { TITLE: "synthetic-private-marker" },
-  { OLD: "1" },
+  { CODEX_DOWN: "1", CLAUDE_DOWN: "1" },
   { ROUNDS: "1" },
 ])
   test(`gate refuses ${Object.keys(options).join()}`, (t) => {
@@ -62,7 +66,12 @@ test("removed personal line passes and posts review receipt", (t) => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(calls, /Review: pass/);
 });
-test("inline Codex blocker posts a blocked round", (t) => {
+test("Codex out of usage hands the review to Claude", (t) => {
+  const { result, calls } = fixture(t, { CODEX_DOWN: "1" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(calls, /Review: pass \(claude/);
+});
+test("a Codex blocker posts a blocked round", (t) => {
   const { result, calls } = fixture(t, { BLOCK: "1" });
   assert.equal(result.status, 1);
   assert.match(calls, /Review blocked \(round 1\/3, codex\)/);

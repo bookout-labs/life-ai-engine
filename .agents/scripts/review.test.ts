@@ -1,42 +1,86 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { blocking, codexReview, PROMPT, parseReview, render, reviewerFor, roundsSinceRegroup } from "./review.ts";
+import {
+  answer,
+  blocking,
+  command,
+  PROMPT,
+  type Review,
+  render,
+  review,
+  reviewersFor,
+  roundsSinceRegroup,
+} from "./review.ts";
 
 const finding = { priority: 1, title: "Include the first element", file: "sum.ts", line: 3, body: "total([5]) is 0." };
+const clean: Review = { summary: "ok", findings: [] };
 
-test("reviewers come from a different family, with Codex as the fallback", () => {
-  assert.equal(reviewerFor("claude-code"), "codex");
-  assert.equal(reviewerFor("codex"), "claude");
-  assert.equal(reviewerFor("grok"), "claude");
-  for (const agent of ["user", "", "unknown", "constructor", "__proto__"]) assert.equal(reviewerFor(agent), "codex");
+test("other families review first; the builder's own family only as the last resort", () => {
+  assert.deepEqual(reviewersFor("claude-code"), ["codex", "claude"]);
+  assert.deepEqual(reviewersFor("codex"), ["claude", "codex"]);
+  assert.deepEqual(reviewersFor("grok"), ["codex", "claude"]);
+  for (const agent of ["user", "", "constructor", "__proto__"])
+    assert.deepEqual(reviewersFor(agent), ["codex", "claude"]);
 });
 
-test("only P0 and P1 findings block a save", () => {
-  const review = (...priorities: number[]) =>
-    parseReview({ summary: "s", findings: priorities.map((priority) => ({ ...finding, priority })) });
-  assert.equal(blocking(review()).length, 0);
-  assert.equal(blocking(review(2, 3)).length, 0);
-  assert.equal(blocking(review(3, 0)).length, 1);
-  assert.equal(blocking(review(1, 1)).length, 2);
+test("only P0 and P1 findings block", () => {
+  const of = (...priorities: number[]): Review => ({
+    summary: "s",
+    findings: priorities.map((priority) => ({ ...finding, priority })),
+  });
+  assert.equal(blocking(of()).length, 0);
+  assert.equal(blocking(of(2, 3)).length, 0);
+  assert.equal(blocking(of(3, 0)).length, 1);
+  assert.equal(blocking(of(1, 1)).length, 2);
 });
 
-test("off-schema reviewer output fails instead of passing", () => {
-  for (const value of [
-    undefined,
-    null,
-    "No findings.",
-    { findings: [] },
-    { summary: "s" },
-    { summary: "s", findings: [{ ...finding, priority: 4 }] },
-    { summary: "s", findings: [{ ...finding, priority: "1" }] },
-    { summary: "s", findings: [{ ...finding, priority: 1.5 }] },
-    { summary: "s", findings: [{ ...finding, line: "3" }] },
-    { summary: "s", findings: [null] },
+test("each CLI runs read-only with the schema", () => {
+  const dir = mkdtempSync(join(tmpdir(), "review-test-"));
+  const claude = command("claude", "p", dir);
+  assert.ok(claude.includes("--json-schema") && claude.includes("Bash(git show:*),Bash(git diff:*),Read,Grep,Glob"));
+  const codex = command("codex", "p", dir);
+  assert.deepEqual(codex.slice(0, 4), ["codex", "exec", "--sandbox", "read-only"]);
+  assert.ok(codex.includes(join(dir, "schema.json")));
+});
+
+test("reads each CLI's answer from where it puts it, and refuses a missing one", () => {
+  const dir = mkdtempSync(join(tmpdir(), "review-test-"));
+  assert.deepEqual(answer("claude", JSON.stringify({ structured_output: clean }), dir), clean);
+  writeFileSync(join(dir, "review.json"), JSON.stringify(clean));
+  assert.deepEqual(answer("codex", "", dir), clean);
+  for (const stdout of [
+    "{}",
+    JSON.stringify({ structured_output: { summary: "s" } }),
+    JSON.stringify({ structured_output: null }),
   ])
-    assert.throws(() => parseReview(value), /off-schema/, JSON.stringify(value));
+    assert.throws(() => answer("claude", stdout, dir), /gave no review/);
+});
+
+test("a reviewer that can't run hands over to the other; neither at all fails the gate", () => {
+  const bin = mkdtempSync(join(tmpdir(), "review-bin-"));
+  const fake = (name: string, script: string) => {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(bin, name), 0o755);
+  };
+  fake("codex", "echo 'usage limit reached' >&2; exit 1");
+  fake("claude", `echo '${JSON.stringify({ structured_output: { summary: "claude", findings: [finding] } })}'`);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    const result = review("claude-code", "base", "head", "issue");
+    assert.equal(result.reviewer, "claude");
+    assert.equal(blocking(result.review).length, 1);
+    fake("claude", "exit 1");
+    assert.throws(
+      () => review("claude-code", "base", "head", "issue"),
+      /No reviewer could run[\s\S]*codex[\s\S]*claude/,
+    );
+  } finally {
+    process.env.PATH = path;
+  }
 });
 
 test("renders findings with their priority and location", () => {
@@ -52,204 +96,6 @@ test("blocked rounds count from the last regroup", () => {
   assert.equal(roundsSinceRegroup([blocked, "chatter", blocked, blocked]), 3);
   assert.equal(roundsSinceRegroup([blocked, blocked, blocked, "Regroup: structured output", blocked]), 1);
   assert.equal(roundsSinceRegroup(["quoting Review blocked (round 1/3)", " Regroup: no"]), 0);
-});
-
-function codexFixture(
-  t: import("node:test").TestContext,
-  {
-    sha = "head",
-    login = "chatgpt-codex-connector[bot]",
-    unresolved = false,
-    formal = false,
-    includeState = true,
-    requestLogin = "",
-    inlineBodies = ["[P0] Synthetic bug"],
-  } = {},
-) {
-  const dir = mkdtempSync(join(tmpdir(), "codex-review-test-"));
-  const previous = process.env.PATH;
-  t.after(() => {
-    process.env.PATH = previous;
-    rmSync(dir, { recursive: true, force: true });
-  });
-  process.env.PATH = `${dir}:${previous}`;
-  writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}');
-  const comments = [
-    {
-      user: { login },
-      body: `<!-- codex-review-state:v1 ${JSON.stringify({
-        code_review: {
-          commit_sha: sha,
-          status: "completed",
-          has_any_findings: unresolved,
-          has_unresolved_findings: unresolved,
-        },
-        security_review: { status: null },
-      })} -->`,
-    },
-  ];
-  if (!includeState) comments.length = 0;
-  if (requestLogin)
-    comments.push({ user: { login: requestLogin }, body: "@codex review\n\n<!-- codex-review-request:head -->" });
-  const reviews = formal ? [{ user: { login }, id: 12, commit_id: sha, body: "Reviewed" }] : [];
-  const inline = inlineBodies.map((body) => ({ path: "a.ts", line: null, body }));
-  writeFileSync(
-    join(dir, "gh"),
-    `#!${process.execPath}
-const path = process.argv[3];
-if (process.argv.includes('-f')) {
-  require('node:fs').appendFileSync(${JSON.stringify(join(dir, "requests"))}, process.argv.at(-1) + '\\n');
-  process.exit(0);
-}
-console.log(JSON.stringify([path.endsWith('/reviews/12/comments') ? ${JSON.stringify(inline)} : path.endsWith('/reviews') ? ${JSON.stringify(reviews)} : ${JSON.stringify(comments)}]));`,
-    { mode: 0o755 },
-  );
-  return dir;
-}
-
-test("clean Codex state at head passes without a formal review", async (t) => {
-  codexFixture(t);
-  assert.deepEqual(blocking(await codexReview("owner/repo", 1, "head", 0)), []);
-});
-for (const [name, options] of [
-  ["older SHA", { sha: "old" }],
-  ["forged state", { login: "someone-else" }],
-  ["forged formal review", { login: "someone-else", formal: true }],
-] as const)
-  test(`Codex ignores ${name}`, async (t) => {
-    codexFixture(t, options);
-    await assert.rejects(codexReview("owner/repo", 1, "head", 0), /No Codex review/);
-  });
-test("unresolved state blocks with inline findings", async (t) => {
-  codexFixture(t, { unresolved: true, formal: true });
-  const review = await codexReview("owner/repo", 1, "head", 0);
-  assert.equal(blocking(review)[0]?.priority, 0);
-  assert.equal(review.findings[0]?.line, 0);
-});
-test("P2 Codex badge findings do not block", async (t) => {
-  codexFixture(t, {
-    unresolved: true,
-    formal: true,
-    inlineBodies: [
-      "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Synthetic finding**",
-    ],
-  });
-  const review = await codexReview("owner/repo", 1, "head", 0);
-  assert.deepEqual(blocking(review), []);
-  assert.equal(review.findings[0]?.priority, 2);
-});
-for (const { priority, color, blocks } of [
-  { priority: 0, color: "red", blocks: true },
-  { priority: 1, color: "orange", blocks: true },
-  { priority: 3, color: "blue", blocks: false },
-])
-  test(`P${priority} Codex badge findings ${blocks ? "block" : "do not block"}`, async (t) => {
-    codexFixture(t, {
-      formal: true,
-      includeState: false,
-      inlineBodies: [
-        `**<sub><sub>![P${priority} Badge](https://img.shields.io/badge/P${priority}-${color}?style=flat)</sub></sub>  Synthetic finding**`,
-      ],
-    });
-    const review = await codexReview("owner/repo", 1, "head", 0);
-    assert.equal(review.findings[0]?.priority, priority);
-    assert.equal(blocking(review).length, blocks ? 1 : 0);
-  });
-
-test("Codex badge priority takes precedence over text tags", async (t) => {
-  codexFixture(t, {
-    formal: true,
-    unresolved: true,
-    inlineBodies: ["![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat) Synthetic finding\nMentions [P2]."],
-  });
-  const review = await codexReview("owner/repo", 1, "head", 0);
-  assert.equal(review.findings[0]?.priority, 1);
-  assert.equal(blocking(review).length, 1);
-});
-
-test("Codex text priority tags remain a fallback", async (t) => {
-  codexFixture(t, {
-    formal: true,
-    unresolved: true,
-    inlineBodies: ["[P1] Synthetic finding", "[P2] Synthetic finding", "[P3] Synthetic finding"],
-  });
-  const review = await codexReview("owner/repo", 1, "head", 0);
-  assert.deepEqual(
-    review.findings.map((finding) => finding.priority),
-    [1, 2, 3],
-  );
-  assert.deepEqual(
-    blocking(review).map((finding) => finding.priority),
-    [1],
-  );
-});
-
-test("unmarked Codex findings default to P1 and block", async (t) => {
-  codexFixture(t, { formal: true, unresolved: true, inlineBodies: ["Synthetic finding without a priority"] });
-  const review = await codexReview("owner/repo", 1, "head", 0);
-  assert.equal(review.findings[0]?.priority, 1);
-  assert.equal(blocking(review).length, 1);
-});
-
-test("priority markers quoted below the first line cannot downgrade an unmarked finding", async (t) => {
-  codexFixture(t, {
-    formal: true,
-    unresolved: true,
-    inlineBodies: ['Synthetic finding\n```suggestion\nconst tag = "[P3]"; // /badge/P3-blue\n```'],
-  });
-  const review = await codexReview("owner/repo", 1, "head", 0);
-  assert.equal(review.findings[0]?.priority, 1);
-  assert.equal(blocking(review).length, 1);
-});
-
-test("mixed Codex badge findings retain each priority and block only P0 and P1", async (t) => {
-  codexFixture(t, {
-    formal: true,
-    unresolved: true,
-    inlineBodies: [
-      "![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat) Synthetic finding",
-      "![P0 Badge](https://img.shields.io/badge/P0-red?style=flat) Synthetic finding",
-      "![P3 Badge](https://img.shields.io/badge/P3-blue?style=flat) Synthetic finding",
-      "![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat) Synthetic finding",
-    ],
-  });
-  const review = await codexReview("owner/repo", 1, "head", 0);
-  assert.deepEqual(
-    review.findings.map((finding) => finding.priority),
-    [2, 0, 3, 1],
-  );
-  assert.deepEqual(
-    blocking(review).map((finding) => finding.priority),
-    [0, 1],
-  );
-});
-test("unresolved state cannot pass before inline comments arrive", async (t) => {
-  codexFixture(t, { unresolved: true });
-  assert.equal(blocking(await codexReview("owner/repo", 1, "head", 0)).length, 1);
-});
-
-test("formal review alone blocks at the head", async (t) => {
-  codexFixture(t, { formal: true, includeState: false });
-  assert.equal(blocking(await codexReview("owner/repo", 1, "head", 0))[0]?.priority, 0);
-});
-for (const requestLogin of ["", "someone-else", "github-actions[bot]"]) {
-  test(`Codex request is once per head, existing requester ${requestLogin || "none"}`, async (t) => {
-    const dir = codexFixture(t, { includeState: false, requestLogin });
-    t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
-    const pending = assert.rejects(codexReview("owner/repo", 1, "head", 120_000), /No Codex review/);
-    for (let i = 0; i < 6; i++) {
-      t.mock.timers.tick(20_000);
-      await Promise.resolve();
-    }
-    await pending;
-    if (requestLogin === "github-actions[bot]") assert.throws(() => readFileSync(join(dir, "requests")));
-    else assert.equal(readFileSync(join(dir, "requests"), "utf8").match(/@codex review/g)?.length, 1);
-  });
-}
-
-test("completed clean state supersedes resolved inline findings at the same head", async (t) => {
-  codexFixture(t, { formal: true });
-  assert.deepEqual(blocking(await codexReview("owner/repo", 1, "head", 0)), []);
 });
 
 test("review prompt frames the public board issue as untrusted acceptance data", () => {

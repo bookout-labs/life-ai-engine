@@ -3,7 +3,7 @@
 // a blocked cross-family review, or a fourth blocked round without a Regroup comment.
 import { execFileSync } from "node:child_process";
 import { added, agentOf, boardNumber, leaks, missing, requireOpenIssue } from "./proof.ts";
-import { blocking, claudeReview, codexReview, MAX_ROUNDS, render, reviewerFor, roundsSinceRegroup } from "./review.ts";
+import { blocking, MAX_ROUNDS, render, roundsSinceRegroup, review as runReview } from "./review.ts";
 
 const env = (name: string): string => {
   const value = process.env[name];
@@ -66,11 +66,7 @@ try {
     );
   }
 
-  const reviewer = reviewerFor(agentOf(body));
-  const review =
-    reviewer === "codex"
-      ? await codexReview(repo, pr, head, Number(process.argv[2] ?? 900000))
-      : claudeReview(base, head, `${card.title}\n${card.body}`);
+  const { reviewer, review } = runReview(agentOf(body), base, head, `${card.title}\n${card.body}`);
   const text = render(review);
   const safeText = leaks([text]) ? "Review details withheld by personal scan." : text;
   const blockers = blocking(review);

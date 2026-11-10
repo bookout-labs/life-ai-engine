@@ -14,4 +14,4 @@ Ship migrates before deploying, runs production smoke checks and posts only iden
 
 ## Accepted limits
 
-Agent trailers are self-reported. Reviewer judgment can miss weakened tests. Codex reviews are matched by bot identity and head SHA rather than signatures. Reviewers read untrusted text. Local scans remain necessary because public branches and automatic review can expose data before the gate runs. The personal-term list is maintained privately and cannot detect terms it does not contain.
+Agent trailers are self-reported. Reviewer judgment can miss weakened tests. When the other family's reviewer can't run, the builder's own family reviews as a last resort so the gate never stalls; the pass comment names the reviewer (Joe, #131). Reviewers read untrusted text. Local scans remain necessary because public branches and automatic review can expose data before the gate runs. The personal-term list is maintained privately and cannot detect terms it does not contain.

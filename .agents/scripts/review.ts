@@ -1,21 +1,25 @@
-// Cross-family review in CI. Codex-built code is reviewed by Claude (CLI on the subscription token);
-// Claude-built code waits for Codex Cloud's GitHub review on the PR head. Both reduce to the same Review shape.
+// Cross-family review in CI. The gate runs the reviewer's own CLI read-only with one prompt and one schema, so
+// Claude and Codex review the same way. The builder's family never reviews; if a reviewer can't run
+// (out of usage, signed out), the next family does, so the gate works whichever provider is up.
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-type Reviewer = "codex" | "claude";
+export type Reviewer = "claude" | "codex";
 export type Finding = { priority: number; title: string; file: string; line: number; body: string };
 export type Review = { findings: Finding[]; summary: string };
 
 export const MAX_ROUNDS = 3;
 
-const REVIEWERS: ReadonlyMap<string, Reviewer> = new Map([
-  ["claude-code", "codex"],
-  ["codex", "claude"],
-  ["grok", "claude"],
-]);
+const FAMILY: Record<string, Reviewer> = { "claude-code": "claude", codex: "codex" };
 
-export function reviewerFor(agent: string): Reviewer {
-  return REVIEWERS.get(agent) ?? "codex";
+// The other families first, in this order; the builder's own family only when no other can run, so the gate
+// never stalls on one provider. The pass comment names the reviewer.
+export function reviewersFor(agent: string): Reviewer[] {
+  const builder = Object.hasOwn(FAMILY, agent) ? FAMILY[agent] : undefined;
+  const others = (["codex", "claude"] as const).filter((reviewer) => reviewer !== builder);
+  return builder ? [...others, builder] : others;
 }
 
 export const SCHEMA = {
@@ -41,27 +45,6 @@ export const SCHEMA = {
     },
   },
 } as const;
-
-// The reviewer's JSON is the only input; anything off-schema fails the review rather than passing it.
-export function parseReview(value: unknown): Review {
-  const bad = (why: string): never => {
-    throw new Error(`Review output is off-schema (${why})`);
-  };
-  if (typeof value !== "object" || value === null) return bad("not an object");
-  const { findings, summary } = value as Record<string, unknown>;
-  if (typeof summary !== "string") return bad("summary");
-  if (!Array.isArray(findings)) return bad("findings");
-  return {
-    summary,
-    findings: findings.map((f: unknown) => {
-      const { priority, title, file, line, body } = (f ?? {}) as Record<string, unknown>;
-      if (!Number.isInteger(priority) || (priority as number) < 0 || (priority as number) > 3) return bad("priority");
-      if (typeof title !== "string" || typeof file !== "string" || typeof body !== "string") return bad("text field");
-      if (!Number.isInteger(line)) return bad("line");
-      return { priority: priority as number, title, file, line: line as number, body };
-    }),
-  };
-}
 
 export function blocking(review: Review): Finding[] {
   return review.findings.filter(({ priority }) => priority <= 1);
@@ -95,99 +78,73 @@ export const PROMPT = (base: string, sha: string, issue: string): string =>
     "Return an empty findings array when there is nothing to report.",
   ].join("\n");
 
-// Claude reviews in Actions through the CLI; CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) carries the subscription.
-export function claudeReview(base: string, sha: string, issue: string): Review {
-  const out = execFileSync(
+// Each CLI enforces the schema itself and can only read; only where it puts the answer differs.
+export function command(reviewer: Reviewer, prompt: string, dir: string): string[] {
+  const schema = JSON.stringify(SCHEMA);
+  if (reviewer === "codex") {
+    writeFileSync(join(dir, "schema.json"), schema);
+    return [
+      "codex",
+      "exec",
+      "--sandbox",
+      "read-only",
+      "--output-schema",
+      join(dir, "schema.json"),
+      "-o",
+      join(dir, "review.json"),
+      prompt,
+    ];
+  }
+  const tools = "Bash(git show:*),Bash(git diff:*),Read,Grep,Glob";
+  return [
     "claude",
-    [
-      "-p",
-      PROMPT(base, sha, issue),
-      "--output-format",
-      "json",
-      "--json-schema",
-      JSON.stringify(SCHEMA),
-      "--allowedTools",
-      "Bash(git show:*),Bash(git diff:*),Read,Grep,Glob",
-      "--permission-mode",
-      "default",
-    ],
-    { encoding: "utf8", stdio: "pipe", maxBuffer: 16 * 1024 * 1024, timeout: 600_000 },
-  );
-  return parseReview((JSON.parse(out) as { structured_output?: unknown }).structured_output);
+    "-p",
+    prompt,
+    "--output-format",
+    "json",
+    "--json-schema",
+    schema,
+    "--allowedTools",
+    tools,
+    "--permission-mode",
+    "default",
+  ];
 }
 
-type CodexComment = { user: { login: string } | null; body: string };
-type CodexReview = CodexComment & { id: number; commit_id: string };
-type InlineComment = { path: string; line: number | null; body: string };
+export function answer(reviewer: Reviewer, stdout: string, dir: string): Review {
+  const value =
+    reviewer === "codex"
+      ? JSON.parse(readFileSync(join(dir, "review.json"), "utf8"))
+      : JSON.parse(stdout).structured_output;
+  if (!Array.isArray(value?.findings) || typeof value.summary !== "string")
+    throw new Error(`${reviewer} gave no review`);
+  return value;
+}
 
-const CODEX = "chatgpt-codex-connector[bot]";
-
-// REST preserves the bot login suffix; paginate so an older result or request is not lost.
-export async function codexReview(repo: string, pr: number, sha: string, deadlineMs = 15 * 60_000): Promise<Review> {
-  const api = (...args: string[]): string => execFileSync("gh", ["api", ...args], { encoding: "utf8", stdio: "pipe" });
-  const list = <T>(path: string): T[] => JSON.parse(api(path, "--paginate", "--slurp")).flat();
-  const start = Date.now();
-  const marker = `<!-- codex-review-request:${sha} -->`;
-  let requested = false;
-  for (;;) {
-    const comments = list<CodexComment>(`repos/${repo}/issues/${pr}/comments`);
-    const reviews = list<CodexReview>(`repos/${repo}/pulls/${pr}/reviews`);
-    const mine = reviews.filter((r) => r.user?.login === CODEX && r.commit_id === sha).at(-1);
-    let unresolved: boolean | undefined;
-    for (const comment of comments) {
-      if (comment.user?.login !== CODEX) continue;
-      const match = /<!-- codex-review-state:v1 (.*?) -->/s.exec(comment.body);
-      if (!match) continue;
-      try {
-        const state = JSON.parse(match[1] ?? "").code_review;
-        if (
-          state?.commit_sha === sha &&
-          state.status === "completed" &&
-          typeof state.has_unresolved_findings === "boolean"
-        ) {
-          unresolved = state.has_unresolved_findings;
-        }
-      } catch {
-        // An incomplete or malformed state is not a completed review.
-      }
-    }
-    if (unresolved === false) return { summary: "Codex review completed", findings: [] };
-    const findings: Finding[] = mine
-      ? list<InlineComment>(`repos/${repo}/pulls/${pr}/reviews/${mine.id}/comments`).map((c) => {
-          const head = c.body.split("\n")[0] ?? "";
-          return {
-            // Only the heading carries priority; quoted code below it must not downgrade an unmarked P1.
-            priority: Number(/\/badge\/P([0-3])\b/.exec(head)?.[1] ?? /\[P([0-3])\]/.exec(head)?.[1] ?? 1),
-            title: head.slice(0, 120) || "Codex finding",
-            file: c.path,
-            line: c.line ?? 0,
-            body: c.body,
-          };
-        })
-      : [];
-    if (unresolved === true && findings.length === 0) {
-      findings.push({
-        priority: 1,
-        title: "Codex has unresolved findings",
-        file: "",
-        line: 0,
-        body: "See the Codex review on this PR.",
+// The first reviewer that answers decides; one that can't run hands over to the next.
+export function review(
+  agent: string,
+  base: string,
+  sha: string,
+  issue: string,
+): { reviewer: Reviewer; review: Review } {
+  const failures: string[] = [];
+  for (const reviewer of reviewersFor(agent)) {
+    const dir = mkdtempSync(join(tmpdir(), "review-"));
+    try {
+      const [cli = "", ...args] = command(reviewer, PROMPT(base, sha, issue), dir);
+      const stdout = execFileSync(cli, args, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        // The reviewer reads untrusted diffs, so it gets no GitHub token or personal-term list.
+        env: { ...process.env, GH_TOKEN: undefined, PERSONAL_TERMS: undefined },
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: 600_000,
       });
+      return { reviewer, review: answer(reviewer, stdout, dir) };
+    } catch (error) {
+      failures.push(`${reviewer}: ${error instanceof Error ? error.message.split("\n")[0] : "failed"}`);
     }
-    if (unresolved !== undefined || mine) {
-      return { summary: mine?.body.split("\n")[0] ?? "Codex review completed", findings };
-    }
-    if (Date.now() - start >= deadlineMs) {
-      throw new Error(
-        `No Codex review for ${sha.slice(0, 7)} within ${deadlineMs / 60_000} minutes. Is the repo connected to Codex code review?`,
-      );
-    }
-    if (!requested && Date.now() - start >= 60_000) {
-      requested = true;
-      if (!comments.some((c) => c.user?.login === "github-actions[bot]" && c.body.includes(marker))) {
-        api(`repos/${repo}/issues/${pr}/comments`, "-f", `body=@codex review\n\n${marker}`);
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 20_000));
   }
+  throw new Error(`No reviewer could run.\n${failures.join("\n")}`);
 }
