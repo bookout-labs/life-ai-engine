@@ -12,9 +12,8 @@ Worker prompts must omit the line. A later prompt cannot opt a session in. A pro
 
 1. Reconcile the live T3 task inventory with the private program store at ~/.life-ai/orchestrate/life-ai-builds. Include every running task, its id, its reporting destination and its report path. Preserve native jobs, delegated jobs and scheduled work. Hook transcript usage cannot establish this inventory.
 2. Prepare JSON outside git with the shape below. Put personal prose in this input only. Use private files or R2 for large artifacts, and include their receipts in state. Use a unique handoff slug for this retiring seat.
-3. Run `node .agents/scripts/handoff.ts validate` with that JSON on stdin. It returns the header or fails if required fields are missing, task ids repeat, or the header exceeds 2,000 UTF-8 bytes.
-4. Run `node .agents/scripts/handoff.ts write handoff/<unique-slug>` with the same JSON on stdin. It creates the Neon page through the core pages API with an expected empty revision. A reused slug is refused atomically. It reads back the exact body and returns only the slug, byte count and SHA256. Storage errors fail visibly. Do not place input prose in shell arguments, logs, PRs or engine files.
-5. Run `node .agents/scripts/handoff.ts read handoff/<unique-slug>` to read the header first. Run the same command with `--full` to recover standing orders, state and jobs. The reader validates that the header matches the detailed body.
+3. Run `node .agents/scripts/handoff.ts write handoff/<unique-slug>` with that JSON on stdin. It checks the packet first: required fields, unique task ids and a header of at most 2,000 UTF-8 bytes. It creates the Neon page through the core pages API with an expected empty revision. A reused slug is refused atomically. It reads back the exact body and returns only the slug and byte count. Storage errors fail visibly. Do not place input prose in shell arguments, logs, PRs or engine files.
+4. Run `node .agents/scripts/handoff.ts read handoff/<unique-slug>` to read the header first. Run the same command with `--full` to recover standing orders, state and jobs. The reader validates that the header matches the detailed body.
 
 The input shape uses synthetic values here.
 
@@ -47,17 +46,6 @@ The input shape uses synthetic values here.
 Start the successor with poteto-mode Orchestrate and Session pickup. Include the retiring T3 thread id, the recovery slug and the opt-in line in an authorized successor prompt. Restore the standing orders and program store. Inspect existing tasks by id and preserve their reporting destinations. Do not recreate active work because a new coordinator owns the handoff.
 
 Launch a new top-level T3 thread only when current user/session authorization permits this successor. A hook threshold supplies no authorization. Otherwise resume the existing coordinator using the verified handoff. Neither seat archives the retiring thread. Pins stay unchanged unless explicit prior authority permits a change.
-
-## Capture bootstrap output
-
-Use a shell pipeline with pipefail so upstream failures stay visible.
-
-```sh
-set -o pipefail
-<bootstrap-command> | node .agents/scripts/handoff.ts capture
-```
-
-Capture streams bytes to an exclusive mode-0600 file under ~/.life-ai/handoffs/bootstrap. Memory use is bounded by a 65,536-byte chunk. Output through exactly 40,000 bytes returns unchanged and deletes the capture file. Larger output returns an absolute private path, bytes and SHA256. Unicode limits count encoded bytes. The receipt is local to this machine. Upload large artifacts through files.ts to private R2 when another machine needs durable recovery. Required source reads still apply.
 
 ## Native hook support
 
