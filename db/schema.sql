@@ -768,6 +768,31 @@ ALTER TABLE public.pages ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 
 
 --
+-- Name: receipt_charge_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.receipt_charge_requests (
+    request_id uuid NOT NULL,
+    result jsonb NOT NULL,
+    CONSTRAINT receipt_charge_requests_result_check CHECK ((jsonb_typeof(result) = 'object'::text))
+);
+
+
+--
+-- Name: receipt_charges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.receipt_charges (
+    obligation_id bigint NOT NULL,
+    posted_on date NOT NULL,
+    amount numeric(12,2) NOT NULL,
+    source_ref text NOT NULL,
+    CONSTRAINT receipt_charges_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT receipt_charges_source_ref_check CHECK (((length(source_ref) >= 1) AND (length(source_ref) <= 4000)))
+);
+
+
+--
 -- Name: relationships; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1337,6 +1362,22 @@ ALTER TABLE ONLY public.pages
 
 
 --
+-- Name: receipt_charge_requests receipt_charge_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.receipt_charge_requests
+    ADD CONSTRAINT receipt_charge_requests_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: receipt_charges receipt_charges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.receipt_charges
+    ADD CONSTRAINT receipt_charges_pkey PRIMARY KEY (source_ref);
+
+
+--
 -- Name: relationships relationships_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1502,6 +1543,13 @@ CREATE INDEX page_revisions_history ON public.page_revisions USING btree (page_i
 --
 
 CREATE INDEX pages_search ON public.pages USING gin (search) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: receipt_charges_obligation_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX receipt_charges_obligation_id_idx ON public.receipt_charges USING btree (obligation_id);
 
 
 --
@@ -1702,6 +1750,14 @@ ALTER TABLE ONLY public.page_revisions
 
 
 --
+-- Name: receipt_charges receipt_charges_obligation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.receipt_charges
+    ADD CONSTRAINT receipt_charges_obligation_id_fkey FOREIGN KEY (obligation_id) REFERENCES public.obligations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: relationships relationships_member_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1790,4 +1846,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261111020000'),
     ('20261111030000'),
     ('20261111040000'),
-    ('20261111050000');
+    ('20261111050000'),
+    ('20261111060000');

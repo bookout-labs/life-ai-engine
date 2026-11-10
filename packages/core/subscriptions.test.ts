@@ -306,6 +306,7 @@ test("subscription tools save replayable links and return specific MCP input err
       "20261110180000_spending_transactions",
       "20261111040000_obligation_merchants",
       "20261111050000_household_transactions",
+      "20261111060000_receipt_charges",
     ]) {
       const sql = await readFile(new URL(`../../db/migrations/${name}.sql`, import.meta.url), "utf8");
       await db.query(sql.split("-- migrate:down")[0] ?? "");
@@ -332,6 +333,87 @@ test("subscription tools save replayable links and return specific MCP input err
       const text = await response.text();
       return JSON.parse(text.startsWith("{") ? text : (text.match(/^data: (.*)$/m)?.[1] ?? "")).result;
     };
+    await t.test("receipt tool replays and deduplicates evidence without changing spending", async () => {
+      const { readSpending } = await import("./spending.ts");
+      await db.query(
+        "insert into transactions(source,source_id,posted_on,amount,merchant,category,account_ref,pending) values ('fixture','receipt-bank-baseline','2040-04-30',12,'Synthetic wallet','fixture','fixture-card',false)",
+      );
+      const before = await readSpending(db, { month: "2040-04" }, "2040-05-15");
+      const receipt = {
+        request_id: crypto.randomUUID(),
+        obligation_id: subscription,
+        posted_on: "2040-03-31",
+        amount: "10.00",
+        source_ref: ["synthetic", "receipt.test"].join(String.fromCharCode(64)),
+      };
+      const unknown = await call("record_receipt_charge", { ...receipt, obligation_id: "9223372036854775807" });
+      assert.equal(unknown.isError, true);
+      assert.equal(unknown.content[0].text, "Obligation 9223372036854775807 not found.");
+      const wrongKind = await call("record_receipt_charge", { ...receipt, obligation_id: bill });
+      assert.equal(wrongKind.isError, true);
+      assert.equal(wrongKind.content[0].text, `Obligation ${bill} is not a subscription.`);
+      const saved = await call("record_receipt_charge", receipt);
+      assert.equal(saved.isError, undefined);
+      assert.deepEqual(JSON.parse(saved.content[0].text), {
+        obligation_id: subscription,
+        posted_on: "2040-03-31",
+        amount: "10.00",
+        source_ref: receipt.source_ref,
+      });
+      assert.deepEqual(await call("record_receipt_charge", { ...receipt, amount: "99.00" }), saved);
+      assert.deepEqual(await call("record_receipt_charge", { ...receipt, request_id: crypto.randomUUID() }), saved);
+      const conflict = await call("record_receipt_charge", {
+        ...receipt,
+        request_id: crypto.randomUUID(),
+        amount: "99.00",
+      });
+      assert.equal(conflict.isError, true);
+      assert.equal(conflict.content[0].text, "Receipt source_ref already records a different charge.");
+      const second = await call("record_receipt_charge", {
+        ...receipt,
+        request_id: crypto.randomUUID(),
+        posted_on: "2040-04-30",
+        amount: "12.00",
+        source_ref: "synthetic-second",
+      });
+      assert.equal(second.isError, undefined);
+      const report = await subscriptionsCheck(db, { as_of: "2040-05-15" });
+      const item = report.subscriptions[0];
+      assert.equal(item?.status, "charged_this_cycle");
+      assert.equal(item?.last_charge?.source, "receipt");
+      assert.equal(item?.last_charge?.source_id, "synthetic-second");
+      assert.equal(item?.previous_amount, "10.00");
+      assert.equal(item?.price_changed, true);
+      assert.deepEqual(item?.duplicate_charges, []);
+      assert.equal(
+        (await subscriptionsCheck(db, { as_of: "2040-06-15" })).subscriptions[0]?.status,
+        "missing_this_cycle",
+      );
+      assert.deepEqual(
+        await readSpending(db, { month: "2040-04" }, "2040-05-15"),
+        before,
+        "Receipt evidence never enters spending; bank transactions already record the money movement.",
+      );
+      const concurrent = await Promise.all([
+        call("record_receipt_charge", {
+          ...receipt,
+          request_id: crypto.randomUUID(),
+          source_ref: "synthetic-concurrent",
+        }),
+        call("record_receipt_charge", {
+          ...receipt,
+          request_id: crypto.randomUUID(),
+          source_ref: "synthetic-concurrent",
+        }),
+      ]);
+      assert.deepEqual(concurrent[0], concurrent[1]);
+      assert.equal(concurrent[0].isError, undefined);
+      const duplicates = (await subscriptionsCheck(db, { as_of: "2040-05-15" })).subscriptions[0]?.duplicate_charges;
+      assert.equal(duplicates?.length, 1);
+      assert.equal(duplicates?.[0]?.evidence.length, 2);
+      await db.query("delete from receipt_charges");
+      await db.query("delete from transactions where source_id = 'receipt-bank-baseline'");
+    });
     const command = {
       request_id: crypto.randomUUID(),
       obligation_id: subscription,
@@ -543,4 +625,46 @@ test("business charges cannot become household subscription candidates or linked
     await db.query(`drop schema ${namespace} cascade`);
     await db.end();
   }
+});
+
+test("receipt evidence identifies an unlinked plan and a later missing cycle", () => {
+  const receipts = [{ obligation_id: "1", posted_on: "2040-04-30", amount: "12.00", source_ref: "synthetic-message" }];
+  const report = buildSubscriptionsCheck([obligation], [], [], "2040-05-15", receipts);
+  assert.equal(report.subscriptions[0]?.status, "charged_this_cycle");
+  assert.equal(report.subscriptions[0]?.last_charge?.source, "receipt");
+  assert.equal(
+    buildSubscriptionsCheck([obligation], [], [], "2040-06-15", receipts).subscriptions[0]?.status,
+    "missing_this_cycle",
+  );
+});
+
+test("receipt charges share cycle, duplicate and cancellation rules without leaking to another plan", () => {
+  const receipt = { obligation_id: "1", posted_on: "2040-04-30", amount: "12.00", source_ref: "synthetic-receipt" };
+  const report = buildSubscriptionsCheck(
+    [obligation, { ...obligation, id: "2" }],
+    [link],
+    [transaction("2040-04-30")],
+    "2040-05-15",
+    [receipt],
+  );
+  assert.deepEqual(
+    report.subscriptions[0]?.duplicate_charges[0]?.evidence.map((row) => row.source),
+    ["fixture", "receipt"],
+  );
+  assert.equal(report.subscriptions[1]?.status, "not_linked");
+  const ended = buildSubscriptionsCheck([{ ...obligation, ended_on: "2040-04-29" }], [], [], "2040-05-15", [receipt]);
+  assert.equal(ended.charged_after_end[0]?.evidence[0]?.source, "receipt");
+  const annual = { ...obligation, cadence: "yearly" as const, due_month: 4 };
+  assert.equal(
+    buildSubscriptionsCheck([annual], [], [], "2040-05-15", [receipt]).subscriptions[0]?.status,
+    "charged_this_cycle",
+  );
+  assert.equal(
+    buildSubscriptionsCheck([annual], [], [], "2041-05-15", [receipt]).subscriptions[0]?.status,
+    "missing_this_cycle",
+  );
+  assert.equal(
+    buildSubscriptionsCheck([obligation], [], [], "2040-04-15", [receipt]).subscriptions[0]?.status,
+    "not_linked",
+  );
 });
