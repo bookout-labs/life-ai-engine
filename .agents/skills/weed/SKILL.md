@@ -43,7 +43,7 @@ For each piece, find whether one of these already does the job:
 - a maintained open-source package, called through its own entry point (going around it for speed rebuilds it);
 - existing code elsewhere in this repo. A sibling repo shows what Joe wants, not how to build it; its code has not been weeded, so don't copy it.
 
-Use current primary docs and the `lab` skill's research order. Cite each source and mark every claim confirmed or unverified.
+Use current primary docs and the `lab` skill's research order. Cite each source and mark every claim confirmed or unverified. A claim that an agent will do something on its own, such as pick a skill or follow an instruction line, is confirmed only by live runs per agent with the script switched off; docs alone leave it unverified.
 
 Done when every piece has a verdict of Keep, Platform (naming the feature), Reuse (naming the file), Script (naming the new or existing script), Delete, or Joe's call, and every Platform or Reuse verdict has its citation.
 

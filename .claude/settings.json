@@ -23,16 +23,6 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/hooks/code-rules.ts",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "mcp__t3-code__delegate_task",
         "hooks": [
           {

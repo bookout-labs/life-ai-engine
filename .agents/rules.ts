@@ -8,7 +8,7 @@ type Route =
     }
   | { kind: "check"; file: `.agents/${string}.ts` };
 
-export type Rule = { id: string; rule: string; trigger: string; route: Route; inject?: string; context?: string };
+export type Rule = { id: string; rule: string; trigger: string; route: Route };
 
 export const MAP = `Life AI is a personal and family operating system over agents in T3 Code.
 
@@ -16,7 +16,7 @@ Read personal context from Neon through node .agents/scripts/pages.ts list, read
 
 Neon holds records and personal prose, R2 holds originals, this repository holds code and system procedures, and the Builds board holds build status. docs/architecture.md describes storage.
 
-Use short, plain answers, visual explanations, existing tools and lean TypeScript. Platform features come first. Account tasks are ready plans with live walkthroughs.
+Use short, plain answers, visual explanations, existing tools and lean TypeScript. Platform features come first. Account tasks are ready plans with live walkthroughs. When writing TypeScript, read .agents/skills/lab/SKILL.md first. Before writing a page, read .agents/skills/wiki/SKILL.md.
 
 .agents/skills is the canonical skill folder. .agents/skills/wiki owns knowledge maintenance; sunday owns family check-ins; lab owns building, research and tool choices. docs/skill-map.md is a catalog. Hooks deliver context on events; checks validate routes. .agents/rules.ts is the rule source and AGENTS.md is generated.`;
 
@@ -83,32 +83,6 @@ export const RULES: Rule[] = [
     rule: "Changing conditions and closed until-issue references fail the stale-rule check.",
     trigger: "npm run check",
     route: { kind: "check", file: ".agents/scripts/stale-rules.ts" },
-  },
-  {
-    id: "code-context",
-    rule: "Deliver lean-code and build guidance when TypeScript is edited.",
-    trigger: "TypeScript edit",
-    route: {
-      kind: "hook",
-      file: ".agents/hooks/code-rules.ts",
-      event: "PreToolUse",
-      tools: { claude: ["Edit", "Write"], codex: ["apply_patch"] },
-    },
-    inject: "**/*.ts",
-    context: ".agents/skills/lab/SKILL.md",
-  },
-  {
-    id: "wiki-context",
-    rule: "Deliver wiki maintenance guidance on scratch-page edits and pages.ts write or save.",
-    trigger: "scratch-page edit or pages.ts write/save",
-    route: {
-      kind: "hook",
-      file: ".agents/hooks/code-rules.ts",
-      event: "PreToolUse",
-      tools: { claude: ["Edit", "Write", "Bash"], codex: ["apply_patch", "Bash", "exec_command"] },
-    },
-    inject: "~/.life-ai/pages/**/*.md",
-    context: ".agents/skills/wiki/SKILL.md",
   },
   {
     id: "orchestrator-registration",

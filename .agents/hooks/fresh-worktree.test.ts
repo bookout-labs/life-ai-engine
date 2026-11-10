@@ -49,15 +49,6 @@ test("fresh checkout hooks enforce guards and register the first prompt without 
     malformed,
     malformed.status === 2 || /"permissionDecision":"deny"/.test(malformed.stdout),
   );
-  const code = run("code-rules", { tool_name: "Edit", tool_input: { file_path: "sample.ts" } });
-  check(
-    "code-rules",
-    code,
-    code.status === 0 &&
-      /Deliver lean-code and build guidance/.test(JSON.parse(code.stdout).hookSpecificOutput.additionalContext),
-  );
-  const outside = run("code-rules", { cwd: home, tool_name: "Bash", tool_input: { command: "ls" } });
-  check("code-rules/non-git", outside, outside.status === 0 && outside.stdout === "");
   const trust = run("codex-trust", { tool_input: { target: { providerInstanceId: "codex" } } });
   check("codex-trust", trust, trust.status === 0 && /"permissionDecision":"deny"/.test(trust.stdout));
   const guard = run("guard", { tool_input: { command: "git push" } });
