@@ -9,6 +9,7 @@ import pg from "pg";
 import {
   fileRead,
   fileWrite,
+  groups,
   pageDelete,
   pageList,
   pageLog,
@@ -17,18 +18,12 @@ import {
   pageWrite,
   slugSchema,
 } from "../../packages/core/pages.ts";
+import { temporarySchema } from "../../packages/core/test-schema.ts";
+import { resolveLink, slugFor } from "../../packages/core/wiki-links.ts";
 import { getFile, putFile } from "./files.ts";
-import { parsePage, resolveLink, slugFor } from "./load-pages.ts";
 import { runPages } from "./pages.ts";
 
-test("loader preserves bytes and metadata and resolves full and shorthand links", () => {
-  const body =
-    "---\ntype: topic\nsummary: Example\ntags: [one, two]\ncreated: 2026-01-02\n---\n# Example\r\n\n[[people/example]]\n";
-  const page = parsePage("wiki/topics/example.md", body);
-  assert.equal(page.body, body);
-  assert.equal(page.slug, "topics/example");
-  assert.equal(page.created_on, "2026-01-02");
-  assert.deepEqual(page.tags, ["one", "two"]);
+test("canonical links resolve full and shorthand targets and page slugs reject unsafe paths", () => {
   const slugs = new Set(["topics/example", "people/person", "areas/plan"]);
   assert.equal(resolveLink("wiki/people/person.md#section|Label", "topics/example", slugs), "people/person");
   assert.equal(resolveLink("person", "topics/example", slugs), "people/person");
@@ -41,27 +36,15 @@ test("loader preserves bytes and metadata and resolves full and shorthand links"
 });
 
 test("Postgres and CLI round trip, revisions, conflict, search, soft delete and files", {
-  skip: process.env.LIFE_AI_PAGE_TEST !== "1",
+  skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
-  const { db: source } = await import("./db.ts");
-  const schema = `pages_test_${process.pid}`;
-  const db = new pg.Pool({
-    connectionString: source.options.connectionString?.replace("-pooler.", "."),
-    options: `-c search_path=${schema},public`,
-  });
+  const db = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 1 });
   const home = await mkdtemp(join(tmpdir(), "life-ai-pages-test-"));
   try {
-    await source.query(`create schema ${schema}`);
-    const sql = await readFile(new URL("../../db/migrations/20261109120000_pages_files.sql", import.meta.url), "utf8");
-    await db.query(sql.split("-- migrate:down")[0] ?? "");
-    await db.query(
-      (
-        await readFile(new URL("../../db/migrations/20261109130000_file_provenance.sql", import.meta.url), "utf8")
-      ).split("-- migrate:down")[0] ?? "",
-    );
+    await db.query(await temporarySchema());
     if (process.env.LIFE_AI_FILE_TEST === "1") {
       const original = join(home, "synthetic.txt");
-      await writeFile(original, `Synthetic integration fixture ${schema}\n`);
+      await writeFile(original, `Synthetic integration fixture ${process.pid}\n`);
       const key = await putFile(db, original);
       try {
         const downloaded = join(home, "download.txt");
@@ -89,7 +72,7 @@ test("Postgres and CLI round trip, revisions, conflict, search, soft delete and 
     assert.equal((await pageSearch(db, "nectarine"))[0]?.slug, input.slug);
     assert.equal((await pageLog(db)).length, 1);
     assert.equal(await runPages(db, ["read", input.slug], home), input.body);
-    assert.match(await runPages(db, ["list"], home), /## Topics/);
+    assert.match(await runPages(db, ["list"], home), new RegExp(`## ${groups.topic}`));
     assert.match(await runPages(db, ["search", "nectarine"], home), /topics\/example/);
     const scratch = await runPages(db, ["edit", input.slug], home);
     await assert.rejects(runPages(db, ["edit", input.slug], home), /EEXIST/);
@@ -135,8 +118,6 @@ test("Postgres and CLI round trip, revisions, conflict, search, soft delete and 
     assert.equal(await fileRead(db, "raw/missing"), undefined);
   } finally {
     await db.end();
-    await source.query(`drop schema if exists ${schema} cascade`);
-    await source.end();
     await rm(home, { recursive: true, force: true });
   }
 });
