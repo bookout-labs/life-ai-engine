@@ -159,7 +159,7 @@ export function tools(env: Env): McpServer {
     "subscriptions_check",
     {
       description:
-        "Compare active subscription obligations to exact linked transaction merchants through as_of, default today in America/Chicago. Shows actual last debit and payer, prices across distinct charged cycles, duplicate debit dates, early-posting-aware monthly cycles, missing and unlinked subscriptions, yearly uncertainty, ended subscriptions still charging and monthly unrecorded merchant candidates with evidence. Imported history only; confirm flags privately before updating the inventory.",
+        "Compare active subscription obligations to exact linked transaction merchants through as_of, default today in America/Chicago. Shows actual last debit and payer, prices across distinct charged cycles, duplicate debit dates, early-posting-aware monthly cycles selected by the latest clamped due date on or before as_of, missing and unlinked subscriptions, yearly uncertainty, scheduled cancellations active through ended_on, ended subscriptions still charging and monthly unrecorded merchant candidates with evidence. Imported history only; confirm flags privately before updating the inventory.",
       inputSchema: subscriptionsCheckSchema,
       annotations: { readOnlyHint: true },
     },
@@ -171,7 +171,7 @@ export function tools(env: Env): McpServer {
     "link_subscription_merchant",
     {
       description:
-        "Link or unlink one exact transaction merchant to a subscription or bill obligation. Ended obligations may link to detect charges after cancellation. Links without an exact matching transaction save with a warning naming the merchant. Bills may link to suppress known bills from forgotten-subscription candidates. Other obligation kinds are rejected. A merchant can belong to only one obligation. Generate request_id once per command and reuse on retries to replay the original response. Confirm the mapping privately; never infer it from a similar name.",
+        "Link or unlink one exact transaction merchant to a subscription or bill obligation. Ended obligations may link to detect charges after cancellation. Links without an exact matching transaction save with a warning naming the merchant. Bills may link to suppress known bills from forgotten-subscription candidates. Other obligation kinds are rejected. A merchant can belong to only one obligation. Unlink rejects merchants linked elsewhere or linked nowhere. Generate request_id once per command and reuse on retries to replay the original response. Confirm the mapping privately; never infer it from a similar name.",
       inputSchema: linkSubscriptionMerchantSchema,
     },
     async (input) => writeResult(env, (db) => linkSubscriptionMerchant(db, input)),

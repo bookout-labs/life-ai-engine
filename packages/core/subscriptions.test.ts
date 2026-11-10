@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { InputError } from "./input-error.ts";
 import { buildSubscriptionsCheck } from "./subscriptions.ts";
 
 const obligation = {
@@ -116,6 +117,41 @@ test("monthly candidates expose evidence and exclude linked merchants and weekly
   assert.deepEqual(buildSubscriptionsCheck([], [], rows, "2040-06-15").unrecorded_recurring_merchants, []);
 });
 
+test("on-time charges stay charged every November day through both grace windows", () => {
+  for (const day_is_estimate of [false, true]) {
+    const plan = { ...obligation, due_day: 15, day_is_estimate };
+    const rows = ["2040-09-15", "2040-10-15", "2040-11-15"].map((d) => transaction(d, "9.99"));
+    for (let day = 1; day <= 30; day++) {
+      const asOf = `2040-11-${String(day).padStart(2, "0")}`;
+      const report = buildSubscriptionsCheck([plan], [link], rows, asOf);
+      assert.equal(report.subscriptions[0]?.status, "charged_this_cycle", `${asOf} estimated=${day_is_estimate}`);
+      assert.deepEqual(report.missing_this_cycle, []);
+    }
+  }
+});
+
+test("early postings remain in their own cycle while status waits for its due date", () => {
+  const plan = { ...obligation, due_day: 15 };
+  const rows = ["2040-09-13", "2040-10-13"].map((d) => transaction(d, "9.99"));
+  const beforeDue = buildSubscriptionsCheck([plan], [link], rows, "2040-11-13").subscriptions[0];
+  assert.equal(beforeDue?.status, "charged_this_cycle");
+  assert.equal(beforeDue?.cycle_from, "2040-10-10");
+  assert.equal(beforeDue?.cycle_through, "2040-11-09");
+  for (let day = 15; day <= 44; day++) {
+    const asOf = new Date(Date.UTC(2040, 10, day)).toISOString().slice(0, 10);
+    assert.equal(
+      buildSubscriptionsCheck([plan], [link], rows, asOf).subscriptions[0]?.status,
+      "missing_this_cycle",
+      asOf,
+    );
+  }
+  assert.equal(
+    buildSubscriptionsCheck([plan], [link], [...rows, transaction("2040-11-13", "9.99")], "2040-11-20").subscriptions[0]
+      ?.status,
+    "charged_this_cycle",
+  );
+});
+
 test("early postings use five days or seven estimated days with half-open clamped cycles", () => {
   const plan = { ...obligation, due_day: 15 };
   const rows = ["2040-09-13", "2040-10-13", "2040-11-13"].map((d) => transaction(d, "9.99"));
@@ -128,13 +164,29 @@ test("early postings use five days or seven estimated days with half-open clampe
     [true, "2040-11-08"],
   ] as const) {
     const ob = { ...plan, day_is_estimate: estimated };
-    const item = buildSubscriptionsCheck([ob], [link], [transaction(start)], start).subscriptions[0];
+    const item = buildSubscriptionsCheck([ob], [link], [transaction(start)], "2040-11-15").subscriptions[0];
     assert.equal(item?.cycle_from, start);
     assert.equal(item?.status, "charged_this_cycle");
     assert.equal(
       buildSubscriptionsCheck([ob], [link], [transaction("2040-11-07")], "2040-11-20").subscriptions[0]?.status,
       "missing_this_cycle",
     );
+  }
+});
+
+test("scheduled cancellations retain normal status through ended_on and disappear the next day", () => {
+  for (const cadence of ["monthly", "yearly"] as const) {
+    const plan = { ...obligation, cadence, due_day: 15, due_month: 11, ended_on: "2040-11-20" };
+    for (const asOf of ["2040-11-19", "2040-11-20"]) {
+      const report = buildSubscriptionsCheck([plan], [link], [transaction("2040-11-15")], asOf);
+      assert.equal(report.subscriptions[0]?.status, "charged_this_cycle", `${cadence} ${asOf}`);
+      assert.deepEqual(report.charged_after_end, []);
+      const unpaid = buildSubscriptionsCheck([plan], [link], [], asOf);
+      assert.equal(unpaid.subscriptions[0]?.status, cadence === "monthly" ? "missing_this_cycle" : "yearly_unknown");
+    }
+    const ended = buildSubscriptionsCheck([plan], [link], [transaction("2040-11-21")], "2040-11-21");
+    assert.deepEqual(ended.subscriptions, []);
+    assert.equal(ended.charged_after_end[0]?.evidence[0]?.posted_on, "2040-11-21");
   }
 });
 
@@ -293,6 +345,16 @@ test("subscription tools save replayable links and return specific MCP input err
       assert.equal(result.isError, true);
       assert.equal(result.content[0].text, expected);
     }
+    const missingUnlink = { ...command, action: "unlink", request_id: crypto.randomUUID() };
+    const missingMessage = `Merchant ${command.merchant} is not linked to obligation ${subscription}; nothing was unlinked.`;
+    const missingResult = await call("link_subscription_merchant", missingUnlink);
+    assert.equal(missingResult.isError, true);
+    assert.equal(missingResult.content[0].text, missingMessage);
+    await assert.rejects(linkSubscriptionMerchant(db, missingUnlink), (error) => {
+      assert.ok(error instanceof InputError);
+      assert.equal(error.message, missingMessage);
+      return true;
+    });
     const saved = await call("link_subscription_merchant", command);
     assert.equal(saved.isError, undefined);
     assert.match(JSON.parse(saved.content[0].text).warning, /Synthetic merchant/);
