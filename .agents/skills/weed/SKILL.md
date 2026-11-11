@@ -9,9 +9,9 @@ The ledger is the Builds board: one issue per target, titled `Weed <path>`. Befo
 
 ## 0. Queue, when Joe asks what is left
 
-List every code file under `.agents/`, `packages/` and `apps/`, every hook in `.claude/settings.json` and `.codex/hooks.json`, every GitHub workflow and every skill, in one table. Answer from this table, never from the open issues.
+Run `node .agents/scripts/weed-queue.ts` and answer what is left from its output.
 
-Done when every file, hook, workflow and skill has a row showing its lines, test lines, and `Weed` issue number or "not weeded".
+Done when Joe has seen the table and every row called left has no closed Weed issue.
 
 ## Process runs
 
