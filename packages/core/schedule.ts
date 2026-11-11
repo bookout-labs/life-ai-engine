@@ -5,8 +5,14 @@ const TZ = "America/Chicago";
 
 export type Event = { day: string; time: string; who: string; what: string; location: string | null };
 
-export function today(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: TZ });
+export function today(now = new Date()): string {
+  return now.toLocaleDateString("en-CA", { timeZone: TZ });
+}
+
+export function addDays(day: string, days: number): string {
+  const date = new Date(`${day}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 export async function schedule(db: pg.ClientBase | pg.Pool, from: string = today(), days = 7): Promise<Event[]> {
