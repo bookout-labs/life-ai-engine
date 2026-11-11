@@ -3,7 +3,7 @@ name: weed
 description: Weed one script, hook, skill or workflow, or a whole process, down to what Life AI must own. Use when Joe names a script, skill or process to weed, trim, audit or reduce, asks which parts a platform already does better, or asks what is left to weed.
 ---
 
-A weed run takes one target and goes through the steps in order. Research builds nothing. After step 5 the run stops for Joe's decision, unless Joe gave a standing authorization that covers the target. Then the coordinator decides, writes "Decided under Joe's standing authorization of <date>; Joe may reverse" on the issue, and goes on to step 7.
+A weed run takes one target and goes through the steps in order. Research builds nothing. After step 5 the run stops for Joe's decision, unless Joe recorded a standing authorization (on an issue, a page or in a thread) whose scope names this target or its group. Then the coordinator links that record, writes "Decided under Joe's standing authorization <link>; Joe may reverse" on the issue, and goes on to step 7. A process run always stops after step 5.
 
 The ledger is the Builds board: one issue per target, titled `Weed <path>`. Before step 1, search open and closed `Weed` issues for the target's path and for each job it does (`gh issue list --state all --search "Weed in:title <word>"`), and read each one found. A job an earlier run moved to a platform is a duplicate here.
 
