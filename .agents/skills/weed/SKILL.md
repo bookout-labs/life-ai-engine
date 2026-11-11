@@ -56,7 +56,7 @@ Done when every Platform, Reuse, Script and Delete row has a "What would we lose
 
 Write scratchpad JSON matching the schema in `.agents/scripts/weed-snapshot.ts`: target, wholeVerdict, runFigures, pieces (range, lines, what, failure, verdict, citation, loss), notAvailable. Run `node .agents/scripts/weed-snapshot.ts <json>`, show its HTML with `html_render`, and post its printed verdict table on the issue. Recommend an answer to each Joe's-call question.
 
-Done when `html_render` has shown the page and the printed table is on the issue. Then wait for Joe's decision, or decide under his standing authorization.
+Done when `html_render` has shown the page and the printed table is on the issue. Then do what the top of this skill says: wait for Joe's decision, or decide under a linked standing authorization when the target is not a process.
 
 ## 6. Redesign, only when Joe asks or a verdict is contested
 

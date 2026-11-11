@@ -23,6 +23,11 @@ const snapshotSchema = z.object({
 });
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
+const pieceText = (value: string) =>
+  escapeHtml(value).replace(
+    /\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener">$1</a>',
+  );
 const cell = (value: string) =>
   escapeHtml(value)
     .replace(/\|/g, "&#124;")
@@ -45,9 +50,9 @@ function render(data: z.infer<typeof snapshotSchema>) {
   const cards = data.pieces
     .map(
       (piece, index) => `<article class="piece"><div class="n">${index + 1}</div><div>
-<div class="head"><strong>${escapeHtml(piece.range)}</strong><span>${piece.lines} lines</span></div>
-<p>${escapeHtml(piece.what)}</p><p><b>${escapeHtml(piece.verdict)}</b> · ${escapeHtml(piece.citation)}</p>
-<p class="note">Failure / origin · ${escapeHtml(piece.failure)}</p><p class="note">What would we lose? ${escapeHtml(piece.loss)}</p>
+<div class="head"><strong>${pieceText(piece.range)}</strong><span>${piece.lines} lines</span></div>
+<p>${pieceText(piece.what)}</p><p><b>${escapeHtml(piece.verdict)}</b> · ${pieceText(piece.citation)}</p>
+<p class="note">Failure / origin · ${pieceText(piece.failure)}</p><p class="note">What would we lose? ${pieceText(piece.loss)}</p>
 </div></article>`,
     )
     .join("\n");
@@ -55,7 +60,7 @@ function render(data: z.infer<typeof snapshotSchema>) {
     .flatMap((piece, index) =>
       ["Platform", "Reuse", "Script"].includes(piece.verdict)
         ? [
-            `<tr><td>Piece ${index + 1}</td><td>${escapeHtml(piece.verdict)}</td><td>${escapeHtml(piece.citation)}</td></tr>`,
+            `<tr><td>Piece ${index + 1}</td><td>${escapeHtml(piece.verdict)}</td><td>${pieceText(piece.citation)}</td></tr>`,
           ]
         : [],
     )

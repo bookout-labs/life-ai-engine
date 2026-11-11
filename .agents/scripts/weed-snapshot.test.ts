@@ -57,6 +57,48 @@ test("plain node renders every piece once, escapes text and derives the bar and 
   }
 });
 
+test("HTTPS markdown links become safe anchors while other text stays escaped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "weed-links-"));
+  try {
+    const link = '[<img> & "issue"](https://example.com/?a=1&b="two")';
+    const text = `${link} [unsafe](javascript:alert) [plain](http://example.com) <script>`;
+    const input = join(dir, "links.json");
+    writeFileSync(
+      input,
+      JSON.stringify({
+        ...fixture,
+        pieces: [
+          {
+            ...fixture.pieces[0],
+            verdict: "Script",
+            range: text,
+            what: text,
+            failure: text,
+            citation: text,
+            loss: text,
+          },
+        ],
+      }),
+    );
+    const run = spawnSync(process.execPath, [script, input], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    const html = readFileSync(join(dir, "links.html"), "utf8");
+    const anchor =
+      '<a href="https://example.com/?a=1&#38;b=&#34;two&#34;" target="_blank" rel="noopener">&#60;img&#62; &#38; &#34;issue&#34;</a>';
+    assert.equal(html.split(anchor).length - 1, 6);
+    assert.ok(html.includes("[unsafe](javascript:alert) [plain](http://example.com) &#60;script&#62;"));
+    assert.ok(!html.includes("<img>"));
+    assert.ok(!html.includes("<script>"));
+    assert.equal((html.match(/<a /g) ?? []).length, 6);
+    assert.ok(
+      run.stdout.includes("[&#60;img&#62; &#38; &#34;issue&#34;](https://example.com/?a=1&#38;b=&#34;two&#34;)"),
+    );
+    assert.ok(!run.stdout.includes("<a "));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("invalid input fails without writing a snapshot or printing a table", () => {
   const dir = mkdtempSync(join(tmpdir(), "weed-invalid-"));
   try {
