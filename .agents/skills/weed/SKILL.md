@@ -27,7 +27,7 @@ Done when the issue records the origin, callers, frequency, run time and a whole
 
 ## 2. Inventory
 
-Read the script end to end, plus everything it imports and its tests. Split it into pieces: contiguous line ranges that each do one job. For each piece, name the real failure it prevents, citing the PR, issue or incident from git log and the board. For a skill or process, a piece is a step, rule or hop, and its cost is the tokens it loads and the turns it causes. A piece an agent does the same way every time should become a script: a script costs no tokens and runs the same every time. A piece with no failure behind it is speculative machinery. A piece that never runs may be switched off rather than unwanted: check Joe's environment, user config and sibling repos before calling it dead.
+Read the script end to end, plus everything it imports and its tests. Split it into pieces: contiguous line ranges that each do one job. For each piece, name the real failure it prevents, citing the PR, issue or incident from git log and the board. For a skill or process, a piece is a step, rule or hop, and its cost is the tokens it loads and the turns it causes. A piece an agent does the same way every time should become a script: a script costs no tokens and runs the same every time. A piece with no failure behind it is speculative machinery. A piece that never runs may be switched off rather than unwanted: search the whole repo, including `apps/`, and check Joe's environment, user config and sibling repos before calling it dead.
 
 Done when every line belongs to exactly one piece, and each piece has a line range, one plain sentence, and a cited failure or "none found".
 
@@ -41,7 +41,7 @@ For each piece, find whether one of these already does the job:
 - Neon;
 - git itself;
 - a maintained open-source package, called through its own entry point (going around it for speed rebuilds it);
-- existing code elsewhere in this repo. A sibling repo shows what Joe wants, not how to build it; its code has not been weeded, so don't copy it.
+- existing code elsewhere in this repo; when a piece repeats, count every copy repo-wide, not only those in this run. A sibling repo shows what Joe wants, not how to build it; its code has not been weeded, so don't copy it.
 
 Use current primary docs and the `lab` skill's research order. Cite each source and mark every claim confirmed or unverified. A claim about what agents do or did, such as picking a skill, following an instruction line or causing a stuck state, is confirmed only by live runs per agent with the script switched off or by recorded evidence such as transcripts or the reflog; docs or inference alone leave it unverified.
 
@@ -52,7 +52,7 @@ Done when every piece has a verdict of Keep, Platform (naming the feature), Reus
 For every piece marked Platform, Reuse, Script or Delete, argue for keeping it. For Script, ask whether the step needs judgment a script can't give. Ask whether the local version:
 - saves tokens (a blocking wait costs none; a wake-up costs a turn);
 - saves wall-clock time (it fails before a push or CI round trip);
-- adds safety;
+- adds safety (a few lines saved never outweigh a changed write path, such as its error order or ID allocation);
 - gives control (structured output, deterministic blocking).
 
 List every capability lost, per agent, even small ones. When a verdict reverses an earlier decision of Joe's, quote it and say what has changed since. Flip the verdict when the local version wins, and say what it wins on.
