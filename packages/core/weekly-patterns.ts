@@ -1,12 +1,9 @@
 import pg from "pg";
 import { z } from "zod";
 import { InputError } from "./input-error.ts";
+import { recordId as id } from "./record-id.ts";
 
 type Database = pg.ClientBase | pg.Pool;
-const id = z
-  .string()
-  .regex(/^[1-9]\d{0,18}$/)
-  .refine((v) => BigInt(v) <= 9223372036854775807n);
 const date = z.iso.date().refine((v) => v >= "1900-01-01" && v <= "2200-12-31");
 const fields = z.object({
   activity_id: id,

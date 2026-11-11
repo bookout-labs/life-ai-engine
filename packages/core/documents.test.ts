@@ -3,11 +3,20 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import pg from "pg";
-import { documentsCheck, recordDocument } from "./documents.ts";
+import { documentsCheck, recordDocument, recordDocumentSchema } from "./documents.ts";
 
 test("documents check tracks essential household papers through idempotent writes", {
   skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
+  for (const id of ["1.0", "abc"])
+    assert.equal(
+      recordDocumentSchema.safeParse({
+        request_id: "00000000-0000-4000-8000-000000000000",
+        kind: "will",
+        member_id: id,
+      }).success,
+      false,
+    );
   const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `documents_test_${randomUUID().replaceAll("-", "")}`;

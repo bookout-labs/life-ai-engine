@@ -2,12 +2,9 @@ import type pg from "pg";
 import { z } from "zod";
 import { InputError } from "./input-error.ts";
 import { cents } from "./money.ts";
+import { recordId as id } from "./record-id.ts";
 import { today } from "./schedule.ts";
 
-const id = z
-  .string()
-  .regex(/^[1-9]\d{0,18}$/)
-  .refine((value) => BigInt(value) <= 9223372036854775807n);
 const merchant = z
   .string()
   .min(1)

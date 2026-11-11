@@ -1,14 +1,11 @@
 import pg from "pg";
 import { z } from "zod";
 import { InputError } from "./input-error.ts";
+import { recordId as memberId } from "./record-id.ts";
 import { today } from "./schedule.ts";
 
 type Database = pg.ClientBase | pg.Pool;
 const date = z.iso.date().refine((value) => value >= "1900-01-01" && value <= "2200-12-31");
-const memberId = z
-  .string()
-  .regex(/^[1-9]\d{0,18}$/)
-  .refine((value) => BigInt(value) <= 9223372036854775807n);
 const rules = [
   { kind: "will", needs: "adult", window: 60 },
   { kind: "durable_power_of_attorney", needs: "adult", window: 60 },

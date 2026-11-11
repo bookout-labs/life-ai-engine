@@ -5,11 +5,24 @@ import test from "node:test";
 import pg from "pg";
 import { InputError } from "./input-error.ts";
 import { schedule } from "./schedule.ts";
-import { addWeeklySessions, previewWeeklySessions, recordWeeklyPattern } from "./weekly-patterns.ts";
+import {
+  addWeeklySessions,
+  previewWeeklySessions,
+  recordWeeklyPattern,
+  recordWeeklyPatternSchema,
+} from "./weekly-patterns.ts";
 
 test("weekly sessions preserve local times and converge across retries", {
   skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
+  for (const id of ["1.0", "abc"])
+    assert.equal(
+      recordWeeklyPatternSchema.safeParse({
+        request_id: "00000000-0000-4000-8000-000000000000",
+        command: { action: "end", pattern_id: id, active_until: "2040-01-01" },
+      }).success,
+      false,
+    );
   const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `weekly_${randomUUID().replaceAll("-", "")}`;

@@ -1,10 +1,7 @@
 import pg from "pg";
 import { z } from "zod";
+import { recordId as memberId } from "./record-id.ts";
 
-const memberId = z
-  .string()
-  .regex(/^[1-9]\d{0,18}$/)
-  .refine((id) => BigInt(id) <= 9223372036854775807n);
 const money = z.string().regex(/^\d{1,10}(\.\d{1,2})?$/);
 const status = z.enum(["idea", "planned", "bought", "wrapped", "given"]);
 export const giftsInputSchema = z.object({

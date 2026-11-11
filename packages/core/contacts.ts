@@ -1,12 +1,9 @@
 import pg from "pg";
 import { z } from "zod";
 import { InputError } from "./input-error.ts";
+import { recordId as targetId } from "./record-id.ts";
 
 type Database = pg.ClientBase | pg.Pool;
-const targetId = z
-  .string()
-  .regex(/^[1-9]\d{0,18}$/)
-  .refine((id) => BigInt(id) <= 9223372036854775807n);
 const role = z.enum([
   "teacher",
   "coach",

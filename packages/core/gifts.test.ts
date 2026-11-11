@@ -44,6 +44,8 @@ test("gift commands reject incomplete recipients, invalid money and unknown stat
   };
   assert.equal(writeGiftSchema.safeParse(input).success, true);
   for (const patch of [
+    { member_id: "1.0", action: "recipient", budget: null },
+    { member_id: "abc", action: "recipient", budget: null },
     { recipient_id: undefined },
     { recipient_id: "0" },
     { recipient_id: "9223372036854775808" },

@@ -2,12 +2,9 @@ import type pg from "pg";
 import { z } from "zod";
 import { InputError } from "./input-error.ts";
 import { slugSchema } from "./pages.ts";
+import { recordId as id } from "./record-id.ts";
 
 const cents = z.number().int().min(0).max(9_000_000_000_000);
-const id = z
-  .string()
-  .regex(/^[1-9]\d{0,18}$/)
-  .refine((v) => BigInt(v) <= 9223372036854775807n);
 const bucket = z.string().trim().min(1).max(120);
 const destination = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("account"), id }),

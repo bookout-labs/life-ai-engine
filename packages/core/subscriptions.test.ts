@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InputError } from "./input-error.ts";
-import { buildSubscriptionsCheck } from "./subscriptions.ts";
+import { buildSubscriptionsCheck, linkSubscriptionMerchantSchema } from "./subscriptions.ts";
 
 const obligation = {
   id: "1",
@@ -27,6 +27,16 @@ const transaction = (posted_on: string, amount = "10.00", extra = {}) => ({
 });
 
 test("monthly cycle clamps due 31 to April 30 and shows actual price and payer", () => {
+  for (const id of ["1.0", "abc"])
+    assert.equal(
+      linkSubscriptionMerchantSchema.safeParse({
+        request_id: "00000000-0000-4000-8000-000000000000",
+        obligation_id: id,
+        merchant: "Test",
+        action: "link",
+      }).success,
+      false,
+    );
   const report = buildSubscriptionsCheck(
     [obligation],
     [link],

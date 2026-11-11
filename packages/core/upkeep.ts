@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { z } from "zod";
+import { recordId } from "./record-id.ts";
 import { today } from "./schedule.ts";
 
 type Database = pg.ClientBase | pg.Pool;
@@ -20,10 +21,7 @@ export const upkeepSchema = z.object({
 });
 export const logUpkeepCompletionSchema = z.object({
   request_id: z.uuid(),
-  task_id: z
-    .string()
-    .regex(/^[1-9]\d*$/)
-    .refine((id) => BigInt(id) <= 9223372036854775807n),
+  task_id: recordId,
   completed_on: dateSchema,
   notes: z.string().trim().max(2000).nullish(),
 });
