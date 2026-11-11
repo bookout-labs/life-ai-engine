@@ -3,106 +3,95 @@ name: weed
 description: Weed one script, hook, skill or workflow, or a whole process, down to what Life AI must own. Use when Joe names a script, skill or process to weed, trim, audit or reduce, asks which parts a platform already does better, or asks what is left to weed.
 ---
 
-Weeding takes one script per run, in stages, and each stage ends at Joe. Joe decides; the run builds nothing until he has chosen. The final form is the frame: one public engine repo, every thread in its own T3 worktree, personal data in Neon and R2.
+A weed run takes one target and goes through the steps in order. Research builds nothing. After step 5 the run stops for Joe's decision, unless Joe gave a standing authorization that covers the target. Then the coordinator decides, writes "Decided under Joe's standing authorization of <date>; Joe may reverse" on the issue, and goes on to step 7.
 
-The ledger is the Builds board: one issue per script, titled `Weed <path>`. It holds the snapshot verdicts, Joe's decisions and the result. Read every closed `Weed` issue before starting a run, so a job already moved to a platform in an earlier run is recognized here as duplicate.
+The ledger is the Builds board: one issue per target, titled `Weed <path>`. Before step 1, search open and closed `Weed` issues for the target's path and for each job it does (`gh issue list --state all --search "Weed in:title <word>"`), and read each one found. A job an earlier run moved to a platform is a duplicate here.
 
 ## 0. Queue, when Joe asks what is left
 
-List every code file under `.agents/`, `packages/` and `apps/`, every hook wired in `.claude/settings.json` and `.codex/hooks.json`, every GitHub workflow and every skill, with line counts, test line counts and `Weed` status. Show it as a table. Answer "what is left" from this table, never from open issues.
+List every code file under `.agents/`, `packages/` and `apps/`, every hook in `.claude/settings.json` and `.codex/hooks.json`, every GitHub workflow and every skill, in one table. Answer from this table, never from the open issues.
 
-Done when every file is in the table.
+Done when every file, hook, workflow and skill has a row showing its lines, test lines, and `Weed` issue number or "not weeded".
 
 ## Process runs
 
-When Joe names a process, such as build → save → gate → merge → ship, the unit is the chain. Step 1 traces one real run end to end from transcripts, PRs and Actions logs: every script, hook, agent turn, model call and wait, with wall-clock time. In step 2 the pieces are the hops between them, and step 3 asks whether a platform owns a whole hop. A process run only finds; each script it changes is built as its own script weed.
+When Joe names a process, such as build → save → gate → merge → ship, the target is the chain. Step 1 traces one real run from transcripts, PRs and Actions logs: every script, hook, agent turn, model call and wait, with its wall-clock time. The pieces are the hops. A process run only finds; each script it changes is built later as its own weed.
 
-Done when the trace covers one real run with times, and every hop has a verdict.
+Done when the issue has a table of one real run's hops, each with its time and a verdict.
 
-## 1. Whole script
+## 1. Whole target
 
-Finish the previous run's step 8 first, then start from current main, so the run judges the script as it is now. Find every caller: hooks config, workflows, package.json scripts, the rules registry, other scripts and skills. Find why it was created: the commit, issue and Joe's decisions behind it, including in the repo it came from. Measure how often it runs and how long one run takes. For hooks, the cost per call matters most, because it is paid on every matching tool call. Ask whether the whole script can go. Open its `Weed` issue.
+Finish the previous run's step 8, then start from current main. Find every caller in hooks config, workflows, package.json, the rules registry, scripts and skills, searching the whole repo including `apps/`. Find the commit, issue and Joe's decisions that created the target, including in its original repo. Measure how often it runs and how long one run takes; for a hook, the cost of one call; for a skill, its words and the turns it causes. Write "not measured" with the reason when you can't. Open its `Weed` issue.
 
-Done when the issue records the origin, callers, frequency, run time and a whole-script verdict.
+Done when the issue body has five filled fields: origin (commit and issue), callers (with file paths), how often it runs, how long one run takes, and a one-sentence verdict on deleting the whole target.
 
 ## 2. Inventory
 
-Read the script end to end, plus everything it imports and its tests. Split it into pieces: contiguous line ranges that each do one job. For each piece, name the real failure it prevents, citing the PR, issue or incident from git log and the board. For a skill or process, a piece is a step, rule or hop, and its cost is the tokens it loads and the turns it causes. A piece an agent does the same way every time should become a script: a script costs no tokens and runs the same every time. A piece with no failure behind it is speculative machinery. A piece that never runs may be switched off rather than unwanted: search the whole repo, including `apps/`, and check Joe's environment, user config and sibling repos before calling it dead.
+Read the target, its imports and its tests. Split it into pieces: in code, a run of lines doing one job; in a skill or process, one step, rule or hop. For each piece, cite the PR, issue or commit showing the failure it prevents, or write "none found". A piece an agent does the same way every time can become a script, which costs no tokens. Before calling a piece dead, search the whole repo including `apps/`, Joe's `~/.claude` and `~/.codex`, and his sibling repos.
 
-Done when every line belongs to exactly one piece, and each piece has a line range, one plain sentence, and a cited failure or "none found".
+Done when the issue has a table in which every line of the target sits in exactly one row, each with a line range, one sentence on what it does, and a cited failure or "none found".
 
 ## 3. Platform check
 
-For each piece, find whether one of these already does the job:
-- T3 Code;
-- GitHub (Actions, rulesets, auto-merge, merge queue, Projects);
-- each agent's own harness or CLI (Claude, Codex, Grok): when a piece calls a model or an agent, check whether every provider can do it the same way, so one path serves them all;
-- Cloudflare;
-- Neon;
-- git itself;
-- a maintained open-source package, called through its own entry point (going around it for speed rebuilds it);
-- existing code elsewhere in this repo; when a piece repeats, count every copy repo-wide, not only those in this run. A sibling repo shows what Joe wants, not how to build it; its code has not been weeded, so don't copy it.
+For each piece, check whether one of these does its job: T3 Code; GitHub Actions, rulesets, merge queue or Projects; the Claude, Codex or Grok CLI (when a piece calls a model, check every provider can do it the same way); Cloudflare, Neon or git; a maintained npm package through its own entry point; or other code in this repo, counting every copy, not only those in the target. Never copy a sibling repo's code.
 
-Use current primary docs and the `lab` skill's research order. Cite each source and mark every claim confirmed or unverified. A claim about what agents do or did, such as picking a skill, following an instruction line or causing a stuck state, is confirmed only by live runs per agent with the script switched off or by recorded evidence such as transcripts or the reflog; docs or inference alone leave it unverified.
+Cite official docs, release notes or source code for each finding, marked confirmed or unverified. A claim about what an agent does, such as picking a skill or getting stuck, is confirmed only by a live run per agent with the target off, or by a transcript, issue or reflog.
 
-Done when every piece has a verdict of Keep, Platform (naming the feature), Reuse (naming the file), Script (naming the new or existing script), Delete, or Joe's call, and every Platform or Reuse verdict has its citation.
+Done when every row has one verdict: Keep; Platform with the feature's doc link; Reuse with the file path; Script with the script path; Delete; or Joe's call with the question.
 
 ## 4. Counter-case
 
-For every piece marked Platform, Reuse, Script or Delete, argue for keeping it. For Script, ask whether the step needs judgment a script can't give. Ask whether the local version:
-- saves tokens (a blocking wait costs none; a wake-up costs a turn);
-- saves wall-clock time (it fails before a push or CI round trip);
-- adds safety (a few lines saved never outweigh a changed write path, such as its error order or ID allocation);
-- gives control (structured output, deterministic blocking).
+For each Platform, Reuse, Script or Delete row, argue for keeping the local version. It wins if it:
 
-List every capability lost, per agent, even small ones. When a verdict reverses an earlier decision of Joe's, quote it and say what has changed since. Flip the verdict when the local version wins, and say what it wins on.
+- saves turns (a blocking wait costs none; each wake-up costs one);
+- fails before a push or CI run;
+- keeps a write path's error order, ID allocation and rollback, which a few saved lines never justify changing;
+- gives structured output or a deterministic block.
 
-Done when each Platform, Reuse, Script or Delete verdict carries a one-line answer to "what would we lose?"
+For Script, ask whether the step needs judgment. When a verdict reverses a decision of Joe's, quote it and say what changed. When the local version wins, change the verdict to Keep and say why.
+
+Done when every Platform, Reuse, Script and Delete row has a "What would we lose?" cell naming each affected agent, or "nothing".
 
 ## 5. Snapshot
 
-Copy `snapshot-example.html` from this folder into the scratchpad and replace its content, keeping the layout:
-- the line-split bar;
-- one card per piece;
-- the "where it would land" table;
-- the "not available" notes.
+Copy `snapshot-example.html` to the scratchpad and replace its content, keeping its line-split bar, one card per piece, "where it would land" table and "not available" notes. Put the whole-target verdict and run times above the cards. Show it with `html_render`, post the verdict table on the issue, and reply with only what the page doesn't say plus each Joe's-call question with your recommendation.
 
-Add the whole-script verdict and the run-time figures above the cards. Show it with `html_render`, post the verdict table on the `Weed` issue, and reply with only what the page doesn't say.
+Done when `html_render` has shown the page and the verdict table is on the issue. Then wait for Joe's decision, or decide under his standing authorization.
 
-Done when Joe has seen the page. Stop there and wait for his questions or decision.
+## 6. Redesign, only when Joe asks or a verdict is contested
 
-## 6. Redesign, when Joe asks
+A verdict is contested when Joe questions it or the coordinator disagrees with the researcher. Give an agent from the other model family, or Fable when Joe names it, the target, snapshot and issue. It rechecks the claims against primary sources, judges every piece again, and writes drafts to the scratchpad, never the repo.
 
-Brief an independent agent from the other model family, or Fable when Joe names it. Hand it:
-- the script;
-- the snapshot;
-- the `Weed` issue;
-- the final-form frame.
-
-Have it verify the snapshot's claims against primary sources and judge every piece again. It writes the redesign and draft files to the scratchpad, never the repo. Relay where it disagrees.
-
-Done when Joe has the redesign, its open questions, and the line counts before and after.
+Done when Joe has the redesign, the pieces it disagrees on, and line and word counts before and after.
 
 ## 7. Build
 
-A weed makes the script smaller as well as better, more reliable, free of bugs and more efficient; a fix that adds machinery is not a weed. Before building, merge main again and drop anything main already fixed, then write the script's scope into its rule text, or into the `Weed` issue when it has no rule: what it must stop, and what is out of scope. When Joe changes the scope mid-run, rewrite it there before saving, because the gate reviews against it. Judge every review finding against that scope; a finding outside it is not a blocker, so bring it to Joe instead of adding code. Set the `Weed` issue's "Done means" to all of these:
-- better: it does its job for every agent and model Joe keeps in scope, so any one provider can be out of usage; a provider whose tool still fails after two tries goes to Joe instead of more debugging;
-- more reliable: it can't fail open on a missing dependency, untrusted config or crash, and each agent is shown to actually run it;
-- free of bugs: tests pass, apart from tests of deleted machinery; a live run per agent, before and after the change, proves each blocked and allowed case and shows nothing outside the scope changed: what the agent sees, what it is stopped from, and when merges and waits happen, because tests and the review check code, not behavior (Neon: `npx neon-env run --` with `NEON_PROJECT_ID` and `NEON_BRANCH` set; Codex: `codex exec --dangerously-bypass-hook-trust`, whose sandbox refuses writes under `.agents/`); the cross-family review is clean;
-- more efficient: lines, run time and call count are all lower, with before and after numbers posted;
-- the change is proven in production.
+A weed makes the target smaller and changes nothing outside its scope; adding machinery is not a weed. Merge main and drop what main already fixed. Write the scope in the issue body: what the target must stop or do, and what is out of scope. The gate reads only the body, so update it when Joe changes the scope. A review finding outside the scope goes to Joe, not into code.
 
-Build through the normal save flow, and record Joe's decisions on the issue.
+Write "Done means" in the issue body:
+
+- Claude and Codex each run it; a provider that fails twice goes to Joe;
+- it can't fail open on a missing dependency, bad config or crash;
+- tests pass, except tests of deleted code;
+- a live run per agent before and after shows each allowed and blocked case, and that what the agent sees, what blocks it, and when merges and waits happen are unchanged outside the scope (lab has the Neon and Codex commands);
+- the cross-family gate review passes;
+- lines go down; post lines, run time and call count before and after, even when unchanged;
+- ship.yml's evidence comment is on the issue, plus any production check the scope names.
+
+Build through save.ts and record Joe's decisions on the issue.
+
+Done when each "Done means" item has its evidence on the issue and the issue is closed.
 
 ## 8. Sharpen this skill
 
-List this run's hiccups. A hiccup is any of these:
-- Joe corrected a verdict or a claim;
-- a verdict flipped after the snapshot;
-- a stage was redone;
-- a stage's "Done when" was met while the work was still incomplete;
-- an instruction here sent the run the wrong way.
+A hiccup is any of these:
 
-A wording preference without a cost in this run is not a hiccup. For each hiccup, change the step or "Done when" that would have prevented it. Prefer sharpening or replacing a line over adding one, so the skill stays the same length unless a hiccup needs a new rule. Post the hiccups and the edit on the `Weed` issue, and save the skill change with it.
+- Joe corrected a verdict or claim;
+- a verdict changed after the snapshot;
+- a step was redone;
+- a step's "Done when" was met while its work was incomplete;
+- a line here sent the run the wrong way.
 
-Done when every hiccup has either an edit that prevents it or a one-line reason it needs none. A run with no hiccups leaves this file unchanged.
+A wording preference that cost nothing is not a hiccup. For each hiccup, change the step or "Done when" that would have prevented it, preferring a replaced line or a code check over a new line. Run `wc -w` on this file before and after; the count may grow only for a new rule a hiccup needs, named on the issue. Post the hiccups, edit and word counts on the `Weed` issue and save the edit with it. A chain may post its hiccups once at the end.
+
+Done when every hiccup has an edit or a one-line reason it needs none, and both word counts are on the issue. A run with no hiccups leaves this file unchanged.
