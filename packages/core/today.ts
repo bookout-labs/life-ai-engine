@@ -3,7 +3,7 @@ import { z } from "zod";
 import { billsDue, deadlinesDue } from "./bills.ts";
 import { MONEY_CHECK_DAYS, moneyCheckSchema, readMoneyCheck } from "./money-check.ts";
 import { pageList, slugSchema } from "./pages.ts";
-import { schedule } from "./schedule.ts";
+import { schedule, today } from "./schedule.ts";
 import { upkeepDue, upkeepSchema } from "./upkeep.ts";
 
 const pageSchema = z.object({ slug: slugSchema, type: z.string(), body: z.string() });
@@ -31,13 +31,9 @@ const fixtureSchema = z.object({
 });
 const windows = { events: 7, bills: MONEY_CHECK_DAYS, deadlines: 14 };
 
-function localDate(now: string): string {
-  return new Date(now).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
-}
-
 export function buildToday(input: unknown) {
   const data = fixtureSchema.parse(input);
-  const date = localDate(data.now);
+  const date = today(new Date(data.now));
   const dailySlug = `daily/${date}`;
   const pages = data.pages.toSorted((a, b) => a.slug.localeCompare(b.slug));
   const daily = pages.filter((p) => p.type === "daily" && /^daily\/\d{4}-\d{2}-\d{2}$/.test(p.slug));
@@ -59,7 +55,7 @@ export function buildToday(input: unknown) {
 
 export async function readToday(db: pg.ClientBase, now = new Date().toISOString()) {
   z.iso.datetime({ offset: true }).parse(now);
-  const date = localDate(now);
+  const date = today(new Date(now));
   await db.query("begin isolation level repeatable read read only");
   try {
     const members = await db.query(

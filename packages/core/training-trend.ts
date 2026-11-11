@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { today } from "./schedule.ts";
+import { addDays, today } from "./schedule.ts";
 import { type Workout, workoutsInRange } from "./workouts.ts";
 
 export const trainingTrendSchema = z.object({
@@ -25,12 +25,6 @@ type TrainingFlag = Evidence &
   );
 type TrainingTrend = { as_of: string; weeks: TrainingWeek[]; flags: TrainingFlag[] };
 type Options = { asOf: string; weeks: number };
-
-function addDays(day: string, days: number): string {
-  const date = new Date(`${day}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
 
 function monday(day: string): string {
   return addDays(day, -((new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7));

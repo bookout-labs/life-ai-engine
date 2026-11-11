@@ -2,16 +2,12 @@ import type pg from "pg";
 import { z } from "zod";
 import { billsDue, deadlinesDue } from "./bills.ts";
 import { overloadWeeks } from "./overload.ts";
-import { schedule } from "./schedule.ts";
+import { addDays, schedule } from "./schedule.ts";
 import { upkeepDue } from "./upkeep.ts";
 
 export function weeklyWindow(from: string) {
   z.iso.date().parse(from);
-  const offset = (days: number) => {
-    const date = new Date(`${from}T12:00:00Z`);
-    date.setUTCDate(date.getUTCDate() + days);
-    return date.toISOString().slice(0, 10);
-  };
+  const offset = (days: number) => addDays(from, days);
   return { from, through: offset(6), deadlinesThrough: offset(13), timeZone: "America/Chicago" };
 }
 
