@@ -499,10 +499,7 @@ export function tools(env: Env): McpServer {
       inputSchema: recordDocumentSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
-    async (input) => {
-      const value = recordDocumentSchema.parse(input);
-      return writeResult(env, (db) => recordDocument(db, value));
-    },
+    async (input) => writeResult(env, (db) => recordDocument(db, input)),
   );
   server.registerTool(
     "warranties_check",
@@ -524,10 +521,7 @@ export function tools(env: Env): McpServer {
       inputSchema: recordWarrantySchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
-    async (input) => {
-      const value = recordWarrantySchema.parse(input);
-      return writeResult(env, (db) => recordWarranty(db, value));
-    },
+    async (input) => writeResult(env, (db) => recordWarranty(db, input)),
   );
   return server;
 }
