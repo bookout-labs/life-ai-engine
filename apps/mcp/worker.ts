@@ -557,7 +557,8 @@ function consentPage(d: ConsentDescription, handle: string): string {
   return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>life-ai</title>
 <style>body{font:16px system-ui;max-width:28rem;margin:3rem auto;padding:0 1rem}button{font:inherit;padding:.5rem 1rem}</style>
 <h1>${html(d.clientName)} → life-ai</h1>
-<p>${d.clientDomain ? escape(d.clientDomain) : "Unverified app"} · ${html(d.redirectHost)}</p>${local}
+<p>${d.clientDomain ? html(d.clientDomain) : "Unverified app"} · ${html(d.redirectHost)}</p>${local}
+<p>Access: ${d.scope.length ? d.scope.map(html).join(", ") : "none requested"}</p>
 <form method="post"><input type="hidden" name="handle" value="${html(handle)}">
 <button name="decision" value="approve">Allow</button> <button name="decision" value="deny">Deny</button></form>`;
 }
