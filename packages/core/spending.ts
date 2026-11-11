@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { z } from "zod";
 import { budgetTargets } from "./finances.ts";
+import { cents, decimal } from "./money.ts";
 import { today } from "./schedule.ts";
 
 const text = z.string().trim().min(1);
@@ -22,17 +23,6 @@ export const spendingInputSchema = z.object({
   month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   category: text.optional(),
 });
-
-function cents(amount: string): bigint {
-  const negative = amount.startsWith("-");
-  const [whole = "0", fraction = ""] = amount.replace(/^-/, "").split(".");
-  const value = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
-  return negative ? -value : value;
-}
-function decimal(value: bigint): string {
-  const magnitude = value < 0n ? -value : value;
-  return `${value < 0n ? "-" : ""}${magnitude / 100n}.${(magnitude % 100n).toString().padStart(2, "0")}`;
-}
 
 // Requires a dedicated connected client, not a pool or an existing transaction.
 export async function importSpending(db: pg.ClientBase, input: readonly SpendingTransaction[]) {
@@ -66,7 +56,7 @@ export async function importSpending(db: pg.ClientBase, input: readonly Spending
            transactions.account_ref, transactions.pending, transactions.exclusion_reason)
          is distinct from (excluded.posted_on, excluded.amount, excluded.merchant, excluded.category,
            excluded.account_ref, excluded.pending, excluded.exclusion_reason)
-         returning (xmax = 0) as inserted`,
+         returning (old.source is null) as inserted`,
         [
           row.source,
           row.source_id,
