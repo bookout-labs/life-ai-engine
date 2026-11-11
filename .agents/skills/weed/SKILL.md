@@ -54,9 +54,9 @@ Done when every Platform, Reuse, Script and Delete row has a "What would we lose
 
 ## 5. Snapshot
 
-Copy `snapshot-example.html` to the scratchpad and replace its content, keeping its line-split bar, one card per piece, "where it would land" table and "not available" notes. Put the whole-target verdict and run times above the cards. Show it with `html_render`, post the verdict table on the issue, and reply with only what the page doesn't say plus each Joe's-call question with your recommendation.
+Write scratchpad JSON matching the schema in `.agents/scripts/weed-snapshot.ts`: target, wholeVerdict, runFigures, pieces (range, lines, what, failure, verdict, citation, loss), notAvailable. Run `node .agents/scripts/weed-snapshot.ts <json>`, show its HTML with `html_render`, and post its printed verdict table on the issue. Recommend an answer to each Joe's-call question.
 
-Done when `html_render` has shown the page and the verdict table is on the issue. Then wait for Joe's decision, or decide under his standing authorization.
+Done when `html_render` has shown the page and the printed table is on the issue. Then do what the top of this skill says: wait for Joe's decision, or decide under a linked standing authorization when the target is not a process.
 
 ## 6. Redesign, only when Joe asks or a verdict is contested
 
