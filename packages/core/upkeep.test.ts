@@ -233,6 +233,8 @@ test("completion inputs reject malformed dates, ids and request ids", async () =
     { request_id: "bad" },
     { task_id: "0" },
     { task_id: "9223372036854775808" },
+    { task_id: "1.0" },
+    { task_id: "abc" },
     { completed_on: "2041-02-30" },
     { completed_on: "1899-01-01" },
   ]) {

@@ -3,11 +3,21 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import pg from "pg";
-import { recordContact, searchContacts } from "./contacts.ts";
+import { recordContact, recordContactSchema, searchContacts } from "./contacts.ts";
 
 test("contacts round-trip and search by name fragment", {
   skip: !process.env.TEST_DATABASE_URL,
 }, async (t) => {
+  for (const id of ["1.0", "abc"])
+    assert.equal(
+      recordContactSchema.safeParse({
+        request_id: "00000000-0000-4000-8000-000000000000",
+        name: "Test",
+        role: "coach",
+        links: [{ kind: "member", id }],
+      }).success,
+      false,
+    );
   const db = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
   await db.connect();
   const namespace = `contacts_${randomUUID().replaceAll("-", "")}`;

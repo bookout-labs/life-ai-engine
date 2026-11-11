@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeCommissionSplit } from "./commission-split.ts";
+import { computeCommissionSplit, recordCommissionPlanSchema } from "./commission-split.ts";
 
 test("percent allocations round down and the remainder absorbs pennies", () => {
   const rules = [
@@ -95,6 +95,16 @@ test("empty plans explain the missing setup and zero gross stays exact", () => {
 });
 
 test("invalid plans and inputs are rejected through the public boundary", () => {
+  for (const id of ["1.0", "abc"])
+    assert.equal(
+      recordCommissionPlanSchema.safeParse({
+        request_id: "00000000-0000-4000-8000-000000000000",
+        effective_on: "2040-01-01",
+        page_slug: "test",
+        rules: [{ bucket: "Rest", kind: "remainder", destination: { kind: "account", id } }],
+      }).success,
+      false,
+    );
   const rest = { bucket: "Rest", kind: "remainder" };
   for (const rules of [
     [rest, rest],
