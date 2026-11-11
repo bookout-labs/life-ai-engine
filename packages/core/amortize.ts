@@ -2,6 +2,7 @@
 // Money is integer cents in bigint. Every rounding is half-up to the cent: the payment once,
 // and interest each time it is charged. The payment due at maturity pays off whatever remains.
 import { z } from "zod";
+import { decimal as dollars } from "./money.ts";
 
 const ACCRUALS = ["daily", "monthly"] as const;
 type Accrual = (typeof ACCRUALS)[number];
@@ -30,10 +31,6 @@ const LIMIT = 2_000;
 
 const round = (n: bigint, d: bigint): bigint => (2n * n + d) / (2n * d);
 const min = (a: bigint, b: bigint): bigint => (a < b ? a : b);
-function dollars(c: bigint): string {
-  const abs = c < 0n ? -c : c;
-  return `${c < 0n ? "-" : ""}${abs / 100n}.${String(abs % 100n).padStart(2, "0")}`;
-}
 const dayCount = (from: string, to: string): number => (Date.parse(to) - Date.parse(from)) / DAY_MS;
 const addDays = (iso: string, n: number): string => new Date(Date.parse(iso) + n * DAY_MS).toISOString().slice(0, 10);
 

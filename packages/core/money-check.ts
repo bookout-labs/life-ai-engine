@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { z } from "zod";
 import { type Bill, billsDue } from "./bills.ts";
+import { cents, decimal } from "./money.ts";
 
 const OVERDUE_LOOKBACK_DAYS = 60;
 export const MONEY_CHECK_DAYS = 7;
@@ -64,14 +65,6 @@ export const moneyCheckSchema = z.object({
   }),
 });
 export type MoneyCheck = z.infer<typeof moneyCheckSchema>;
-
-function cents(amount: string): bigint {
-  const [whole = "0", fraction = ""] = amount.split(".");
-  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
-}
-function decimal(value: bigint): string {
-  return `${value / 100n}.${(value % 100n).toString().padStart(2, "0")}`;
-}
 
 export function buildMoneyCheck(
   obligations: readonly MoneyObligation[],

@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { z } from "zod";
 import { InputError } from "./input-error.ts";
+import { cents } from "./money.ts";
 import { today } from "./schedule.ts";
 
 const id = z
@@ -66,12 +67,6 @@ const BASIS_POINTS = 10000n;
 const EARLY_GRACE_DAYS = 5;
 const ESTIMATED_EARLY_GRACE_DAYS = 7;
 const DAY_MS = 86400000;
-function cents(value: string): bigint {
-  const negative = value.startsWith("-");
-  const [whole = "0", fraction = ""] = value.replace(/^-/, "").split(".");
-  const amount = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
-  return negative ? -amount : amount;
-}
 const dayNumber = (value: string) => Date.parse(`${value}T00:00:00Z`) / DAY_MS;
 const eligible = (row: Transaction, asOf: string) =>
   !row.pending && row.exclusion_reason === null && cents(row.amount) > 0n && row.posted_on <= asOf;
