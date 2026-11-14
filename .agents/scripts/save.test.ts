@@ -90,6 +90,7 @@ exec ${quote(realGit)} "$@"
     if (command === 'issue view') console.log(JSON.stringify({state:'OPEN', title:'fixture', body:'fixture', comments:[]}));
     if (command === 'pr list' && process.env.EXISTING) console.log('https://example.invalid/pr/1');
     if (command === 'pr create') console.log('https://example.invalid/pr/1');
+    if (command === 'project item-add') console.log('PVTI_fixture');
   `,
   );
   script(
@@ -130,6 +131,19 @@ test("a queueing failure says the PR is pushed but not queued", (t) => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /save: .* is pushed but not queued/);
   assert.doesNotMatch(result.stderr, /Command failed|at .*file:/);
+});
+test("a save moves its issue's card to Proving; a board failure only warns", (t) => {
+  const f = fixture(t);
+  f.put("docs/note.md", "change");
+  const result = f.run({}, "docs/note.md", ...args);
+  assert.equal(result.status, 0, result.stderr);
+  const calls = readFileSync(join(f.dir, "gh.log"), "utf8");
+  assert.match(calls, /"project","item-add","1","--owner","bookout-labs","--url","[^"]*\/issues\/96"/);
+  assert.match(calls, /"project","item-edit","--id","PVTI_fixture",.*"--single-select-option-id","89a77d8c"\]/);
+  f.put("docs/note.md", "change again");
+  const failed = f.run({ FAIL_GH: "project item-edit" }, "docs/note.md", ...args);
+  assert.equal(failed.status, 0, failed.stderr);
+  assert.match(failed.stderr, /#96 could not be moved to Proving/);
 });
 test("a file already removed with git rm saves its deletion; a name that matches nothing says so", (t) => {
   const f = fixture(t);
