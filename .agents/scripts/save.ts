@@ -176,6 +176,31 @@ try {
   fail(`${pr} is pushed but not queued. Save again to queue it.`);
 }
 console.log(`2/2 ${pr} is queued and merges when check, gate and secrets pass.`);
+// Saved work is finished work, so its card goes to Proving; closing the issue on ship.yml's evidence moves it to Done.
+// The board is a view, not the gate: a failed move warns and the save stands.
+if (values.issue) {
+  const board = ["--project-id", "PVT_kwDOFRv1Q84Bqu2a", "--field-id", "PVTSSF_lADOFRv1Q84Bqu2azhpEn70"];
+  const url = `https://github.com/bookout-labs/life-ai-engine/issues/${values.issue}`;
+  try {
+    const item = gh(
+      "project",
+      "item-add",
+      "1",
+      "--owner",
+      "bookout-labs",
+      "--url",
+      url,
+      "--format",
+      "json",
+      "--jq",
+      ".id",
+    );
+    gh("project", "item-edit", "--id", item, ...board, "--single-select-option-id", "89a77d8c");
+    console.log(`#${values.issue} is Proving on the Builds board.`);
+  } catch {
+    console.warn(`save: #${values.issue} could not be moved to Proving on the Builds board. Set it by hand.`);
+  }
+}
 console.log(
   "Link and watch it (link_pull_request, watch_pull_request); merged is not done until ship.yml's run passes.",
 );
