@@ -55,4 +55,4 @@ jobs:
           export DATABASE_URL="${DATABASE_URL/sslmode=require/sslmode=verify-full}&sslrootcert=system"
           npx dbmate status --exit-code
           npx dbmate dump
-          git diff --exit-code -I "^-- Dumped by pg_dump" db/schema.sql || { echo "::error::Production schema differs from db/schema.sql: a change was made outside migrations."; exit 1; }
+          git diff --exit-code -I "^-- Dumped (from database|by pg_dump) version" db/schema.sql || { echo "::error::Production schema differs from db/schema.sql: a change was made outside migrations."; exit 1; }
